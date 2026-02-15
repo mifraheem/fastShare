@@ -19,10 +19,16 @@ function getCorsOrigins() {
     .filter(Boolean);
 }
 
+// Rate limit: window in ms, max requests per IP per window
+const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS) || 60 * 1000; // 1 minute
+const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_MAX) || 120; // 120 req/min per IP
+
 module.exports = {
   PORT: process.env.PORT || 8000,
   DB_PATH: process.env.DB_PATH || 'app.db',
   CORS_ORIGINS: getCorsOrigins(),
+  RATE_LIMIT_WINDOW_MS,
+  RATE_LIMIT_MAX,
   // Room default TTL in seconds (e.g. 3000 = 50 minutes)
   DEFAULT_ROOM_TTL_SECONDS: 3000,
   // Client identity TTL in seconds (e.g. 24 hours)

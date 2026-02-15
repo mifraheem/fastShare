@@ -1,12 +1,12 @@
 /**
  * FastShare Backend - Node.js + Express
- * Entry point: init database, apply CORS, mount routes.
- * Load .env first so config can read CORS_ORIGINS etc.
+ * Entry point: init database, CORS (allow all), rate limit, mount routes.
  */
 require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
+const rateLimit = require('express-rate-limit');
 const cookieParser = require('cookie-parser');
 const config = require('./config');
 const { getDb } = require('./db/connection');
@@ -24,26 +24,28 @@ try {
 
 const app = express();
 
-// CORS: allow only origins from config (read from .env CORS_ORIGINS)
-// Normalize origins (no trailing slash) so "https://room.ifraheem.dev" and "https://room.ifraheem.dev/" both match
-function normalizeOrigin(origin) {
-  if (!origin || typeof origin !== 'string') return '';
-  return origin.trim().replace(/\/+$/, '');
-}
-const allowedOrigins = new Set(config.CORS_ORIGINS);
+// CORS: allow all origins (no allowlist)
 app.use(cors({
-  origin(origin, callback) {
-    if (!origin) return callback(null, true);
-    const normalized = normalizeOrigin(origin);
-    if (allowedOrigins.has(normalized)) return callback(null, true);
-    callback(new Error('Not allowed by CORS'));
-  },
+  origin: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Origin', 'Content-Type', 'Accept', 'Authorization', 'X-Client-UUID'],
   credentials: true,
   optionsSuccessStatus: 204,
   preflightContinue: false
 }));
+
+// Global rate limiter: apply to all API requests
+const limiter = rateLimit({
+  windowMs: config.RATE_LIMIT_WINDOW_MS,
+  limit: config.RATE_LIMIT_MAX,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => req.path === '/health',
+  handler: (req, res) => {
+    res.status(429).json({ ok: false, error: { code: 'RATE_LIMIT', message: 'Too many requests, please try again later.' } });
+  }
+});
+app.use(limiter);
 
 app.use(cookieParser());
 
@@ -70,5 +72,5 @@ app.use((err, req, res, next) => {
 
 app.listen(config.PORT, () => {
   console.log('FastShare (Node.js) running on port', config.PORT);
-  console.log('CORS allowed origins:', config.CORS_ORIGINS.length, 'origin(s)');
+  console.log('Rate limit:', config.RATE_LIMIT_MAX, 'req /', config.RATE_LIMIT_WINDOW_MS / 1000, 's per IP');
 });

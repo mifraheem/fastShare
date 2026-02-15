@@ -14,7 +14,7 @@ Pure JavaScript (no TypeScript). Deployed on **Hostinger**.
 cd fast-share-backend
 npm install
 cp .env.example .env
-# Edit .env: set CORS_ORIGINS to your frontend URL(s)
+# Edit .env if needed (CORS allows all origins; rate limit is global)
 npm start
 ```
 
@@ -22,11 +22,14 @@ Runs on **http://localhost:8000** by default.
 
 ## Environment
 
-| Variable       | Description                          | Example |
-|----------------|--------------------------------------|---------|
-| `PORT`         | Server port                          | `8000`  |
-| `DB_PATH`      | SQLite database path                 | `app.db`|
-| `CORS_ORIGINS` | Allowed frontend origins (comma-separated) | `https://room.ifraheem.dev` |
+| Variable               | Description                              | Default |
+|------------------------|------------------------------------------|---------|
+| `PORT`                 | Server port                              | `8000`  |
+| `DB_PATH`              | SQLite database path                     | `app.db`|
+| `RATE_LIMIT_WINDOW_MS` | Rate limit window (ms)                   | `60000` (1 min) |
+| `RATE_LIMIT_MAX`       | Max requests per IP per window           | `120`   |
+
+CORS allows all origins. A global rate limiter applies to all routes except `GET /health`.
 
 ## Project structure
 
