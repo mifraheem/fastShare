@@ -11,6 +11,7 @@ import {
   FolderOpen,
   Clock,
   Trash2,
+  Info,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -291,45 +292,53 @@ export default function RoomView() {
         animate={{ y: 0, opacity: 1 }}
         className="sticky top-0 z-40 glass border-b border-border/50"
       >
-        <div className="container mx-auto px-4 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-4">
+        <div className="container mx-auto px-3 sm:px-4 h-14 sm:h-16 flex items-center justify-between gap-2 min-w-0">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
             <Button
               variant="ghost"
               size="icon"
+              className="h-9 w-9 shrink-0"
               onClick={() => navigate("/")}
+              aria-label="Back to home"
             >
               <ArrowLeft className="h-5 w-5" />
             </Button>
-
-            <div>
-              <h1 className="font-display font-bold">
-                🏠 {roomName?.replace(/-/g, " ")}
+            <img
+              src="/logo.png"
+              alt="FastShare"
+              className="h-6 w-6 sm:h-8 sm:w-8 rounded-lg object-contain shrink-0"
+            />
+            <div className="min-w-0 flex-1">
+              <h1 className="font-display font-bold text-sm sm:text-base truncate" title={roomName?.replace(/-/g, " ")}>
+                {roomName?.replace(/-/g, " ")}
               </h1>
-              <div className="flex items-center gap-2">
-                <code className="text-xs font-mono text-muted-foreground">
+              <div className="flex items-center gap-1.5">
+                <code className="text-xs font-mono text-muted-foreground truncate max-w-[80px] sm:max-w-none">
                   {roomCode}
                 </code>
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-6 w-6"
+                  className="h-7 w-7 shrink-0"
                   onClick={handleCopyCode}
                 >
                   {copied ? (
-                    <Check className="h-3 w-3 text-success" />
+                    <Check className="h-3.5 w-3.5 text-success" />
                   ) : (
-                    <Copy className="h-3 w-3" />
+                    <Copy className="h-3.5 w-3.5" />
                   )}
                 </Button>
               </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
-            <DisplayNameBadge variant="compact" />
-            <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-secondary">
-              <Timer className="h-4 w-4" />
-              <span className="font-mono font-medium">
+          <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
+            <div className="hidden sm:block">
+              <DisplayNameBadge variant="compact" />
+            </div>
+            <div className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-4 py-1.5 sm:py-2 rounded-full bg-secondary">
+              <Timer className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
+              <span className="font-mono font-medium text-xs sm:text-sm tabular-nums">
                 {timeLeft !== null ? formatTime(timeLeft) : "—:——:——"}
               </span>
             </div>
@@ -339,26 +348,26 @@ export default function RoomView() {
       </motion.header>
 
       {/* Main - fills remaining height */}
-      <main className="container mx-auto px-4 py-4 flex-1 flex flex-col min-h-0">
-        <div className="grid lg:grid-cols-3 gap-6 flex-1 min-h-0">
+      <main className="container mx-auto px-3 sm:px-4 py-3 sm:py-4 flex-1 flex flex-col min-h-0">
+        <div className="grid lg:grid-cols-3 gap-4 sm:gap-6 flex-1 min-h-0">
           {/* Chat + Files - full height */}
-          <div className="lg:col-span-2 flex flex-col min-h-0">
+          <div className="lg:col-span-2 flex flex-col min-h-0 min-w-0">
             <Tabs defaultValue="chat" className="flex flex-col flex-1 min-h-0">
-              <TabsList className="glass-card p-1 mb-2 shrink-0">
-                <TabsTrigger value="chat">
-                  <MessageSquare className="h-4 w-4 mr-2" />
+              <TabsList className="glass-card p-1 mb-2 shrink-0 grid grid-cols-2 w-full sm:w-auto">
+                <TabsTrigger value="chat" className="min-h-[44px] text-sm sm:text-base">
+                  <MessageSquare className="h-4 w-4 mr-1.5 sm:mr-2 shrink-0" />
                   Chat
                 </TabsTrigger>
-                <TabsTrigger value="files">
-                  <FolderOpen className="h-4 w-4 mr-2" />
+                <TabsTrigger value="files" className="min-h-[44px] text-sm sm:text-base">
+                  <FolderOpen className="h-4 w-4 mr-1.5 sm:mr-2 shrink-0" />
                   Files
                 </TabsTrigger>
               </TabsList>
 
               {/* Chat - full height */}
               <TabsContent value="chat" className="flex-1 flex flex-col min-h-0 mt-0 data-[state=inactive]:hidden">
-                <div className="glass-card flex-1 flex flex-col min-h-0">
-                  <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
+                <div className="glass-card flex-1 flex flex-col min-h-0 rounded-lg overflow-hidden">
+                  <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4">
                     {messagesLoading && (
                       <p className="text-sm text-muted-foreground">
                         Loading messages…
@@ -395,7 +404,7 @@ export default function RoomView() {
                     <div ref={messagesEndRef} />
                   </div>
 
-                  <div className="p-4 border-t border-border/50">
+                  <div className="p-3 sm:p-4 border-t border-border/50 shrink-0">
                     <div className="flex gap-2 items-end">
                       <div className="relative flex-1 min-h-[44px] rounded-lg border border-border bg-secondary/50 focus-within:ring-2 focus-within:ring-primary focus-within:ring-offset-2 focus-within:ring-offset-background">
                         <div
@@ -420,21 +429,22 @@ export default function RoomView() {
                       <Button
                         onClick={handleSendMessage}
                         disabled={composerEmpty}
-                        className="shrink-0"
+                        size="icon"
+                        className="shrink-0 h-[44px] w-[44px]"
                       >
                         <Send className="h-5 w-5" />
                       </Button>
                     </div>
                     <p className="text-xs text-muted-foreground mt-1.5">
-                      Paste from any site to keep formatting (headings, lists, bold, etc.)
+                      Paste from any site to keep formatting
                     </p>
                   </div>
                 </div>
               </TabsContent>
 
               {/* Files */}
-              <TabsContent value="files">
-                <div className="glass-card p-6 space-y-6">
+              <TabsContent value="files" className="mt-0">
+                <div className="glass-card p-4 sm:p-6 space-y-4 sm:space-y-6 rounded-lg">
                   <FileUpload onUpload={handleFileUpload} />
 
                   {filesLoading ? (
@@ -453,15 +463,18 @@ export default function RoomView() {
             </Tabs>
           </div>
 
-          {/* Sidebar */}
-          <div className="space-y-6 min-h-0 overflow-y-auto">
-            <div className="glass-card p-6">
-              <h3 className="text-lg font-semibold mb-4">ℹ️ Room Info</h3>
+          {/* Sidebar - Room Info & Owner options */}
+          <div className="space-y-4 sm:space-y-6 min-h-0 overflow-y-auto lg:max-h-[calc(100vh-8rem)]">
+            <div className="glass-card p-4 sm:p-6 rounded-lg">
+              <h3 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4 flex items-center gap-2">
+                <Info className="h-5 w-5 text-primary shrink-0" />
+                Room Info
+              </h3>
               <p className="text-sm text-muted-foreground mb-2">
                 You're here as
               </p>
-              <DisplayNameBadge variant="compact" className="w-full justify-center mb-4" />
-              <code className="block p-3 rounded bg-secondary text-center mb-4">
+              <DisplayNameBadge variant="compact" className="w-full justify-center mb-3 sm:mb-4" />
+              <code className="block p-2.5 sm:p-3 rounded-lg bg-secondary text-center text-xs sm:text-sm font-mono mb-3 sm:mb-4 break-all">
                 {roomCode}
               </code>
               {roomDetail?.members && roomDetail.members.length > 0 && (
@@ -475,7 +488,7 @@ export default function RoomView() {
                         key={m.id}
                         className="text-sm flex items-center justify-between gap-2"
                       >
-                        <span className="truncate">
+                        <span className="truncate min-w-0">
                           {m.name || "Member"}
                           {m.me && (
                             <span className="ml-1 text-muted-foreground text-xs">
@@ -495,9 +508,9 @@ export default function RoomView() {
 
             {/* Owner-only: Extend & Delete */}
             {roomDetail?.owner && (
-              <div className="glass-card p-6 space-y-4">
-                <h3 className="text-lg font-semibold flex items-center gap-2">
-                  <Clock className="h-5 w-5" />
+              <div className="glass-card p-4 sm:p-6 space-y-4 rounded-lg">
+                <h3 className="text-base sm:text-lg font-semibold flex items-center gap-2">
+                  <Clock className="h-4 w-4 sm:h-5 sm:w-5 shrink-0" />
                   Owner options
                 </h3>
 
@@ -505,12 +518,13 @@ export default function RoomView() {
                   <p className="text-sm text-muted-foreground mb-2">
                     Add time to this room
                   </p>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-col sm:flex-row flex-wrap gap-2">
                     {EXTEND_OPTIONS.map(({ label, minutes }) => (
                       <Button
                         key={minutes}
                         variant="outline"
                         size="sm"
+                        className="min-h-[44px] flex-1 sm:flex-initial"
                         disabled={extendRoomMutation.isPending || roomDetail?.expired}
                         onClick={() => handleExtendRoom(minutes)}
                       >
@@ -520,18 +534,18 @@ export default function RoomView() {
                   </div>
                 </div>
 
-                <div className="pt-2 border-t border-border/50">
+                <div className="pt-3 border-t border-border/50">
                   <p className="text-sm text-muted-foreground mb-2">
                     Permanently remove this room
                   </p>
                   <Button
                     variant="outline"
                     size="sm"
-                    className="text-destructive border-destructive/50 hover:bg-destructive/10 hover:text-destructive"
+                    className="w-full sm:w-auto text-destructive border-destructive/50 hover:bg-destructive/10 hover:text-destructive min-h-[44px]"
                     disabled={deleteRoomMutation.isPending}
                     onClick={() => setDeleteDialogOpen(true)}
                   >
-                    <Trash2 className="h-4 w-4 mr-2" />
+                    <Trash2 className="h-4 w-4 mr-2 shrink-0" />
                     Delete room
                   </Button>
                 </div>
