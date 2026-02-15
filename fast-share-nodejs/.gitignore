@@ -1,0 +1,7 @@
+node_modules/
+app.db
+app.db-wal
+app.db-shm
+media/
+.env
+*.log

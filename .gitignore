@@ -1,0 +1,6 @@
+fast-share-golang/
+node_modules/
+.env
+.DS_Store
+.idea
+.vscode

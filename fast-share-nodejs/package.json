@@ -1,0 +1,20 @@
+{
+  "name": "fast-share-nodejs",
+  "version": "1.0.0",
+  "description": "FastShare backend - Node.js + Express. Private rooms for chat and file sharing.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": ["fast-share", "chat", "files", "express", "sqlite"],
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^11.6.0",
+    "dotenv": "^16.4.5",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "express": "^4.21.0",
+    "multer": "^1.4.5-lts.1"
+  }
+}
