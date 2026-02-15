@@ -3,12 +3,20 @@
  * Reads from process.env (use .env file with dotenv loaded in server.js).
  */
 
+function normalizeOrigin(origin) {
+  if (!origin || typeof origin !== 'string') return '';
+  return origin.trim().replace(/\/+$/, '');
+}
+
 function getCorsOrigins() {
   const raw = process.env.CORS_ORIGINS;
   if (!raw || typeof raw !== 'string') {
     return ['http://localhost:8080', 'http://localhost:5173', 'http://127.0.0.1:5173'];
   }
-  return raw.split(',').map((s) => s.trim()).filter(Boolean);
+  return raw
+    .split(',')
+    .map((s) => normalizeOrigin(s))
+    .filter(Boolean);
 }
 
 module.exports = {

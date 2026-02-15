@@ -20,17 +20,24 @@ migrate();
 const app = express();
 
 // CORS: allow only origins from config (read from .env CORS_ORIGINS)
+// Normalize origins (no trailing slash) so "https://room.ifraheem.dev" and "https://room.ifraheem.dev/" both match
+function normalizeOrigin(origin) {
+  if (!origin || typeof origin !== 'string') return '';
+  return origin.trim().replace(/\/+$/, '');
+}
 const allowedOrigins = new Set(config.CORS_ORIGINS);
 app.use(cors({
   origin(origin, callback) {
-    // Allow requests with no origin (e.g. Postman, same-origin)
     if (!origin) return callback(null, true);
-    if (allowedOrigins.has(origin)) return callback(null, true);
+    const normalized = normalizeOrigin(origin);
+    if (allowedOrigins.has(normalized)) return callback(null, true);
     callback(new Error('Not allowed by CORS'));
   },
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Origin', 'Content-Type', 'Accept', 'X-Client-UUID'],
-  credentials: true
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Origin', 'Content-Type', 'Accept', 'Authorization', 'X-Client-UUID'],
+  credentials: true,
+  optionsSuccessStatus: 204,
+  preflightContinue: false
 }));
 
 app.use(cookieParser());
@@ -58,4 +65,5 @@ app.use((err, req, res, next) => {
 
 app.listen(config.PORT, () => {
   console.log('FastShare (Node.js) running on port', config.PORT);
+  console.log('CORS allowed origins:', config.CORS_ORIGINS.length, 'origin(s)');
 });
