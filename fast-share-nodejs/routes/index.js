@@ -10,7 +10,7 @@ const meHandler = require('../handlers/me');
 const roomsHandler = require('../handlers/rooms');
 const messagesHandler = require('../handlers/messages');
 const filesHandler = require('../handlers/files');
-
+const healthHandler = require('../handlers/health');
 const router = express.Router();
 
 // Multer for file upload (memory storage; we write to disk in handler)
@@ -18,6 +18,9 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 50 * 1024 * 1024 } // 50 MB
 });
+
+// --- /health ---
+router.get('/', healthHandler.getHealth);
 
 // --- /me (current client profile) ---
 router.put('/me', attachClient, meHandler.putMe);

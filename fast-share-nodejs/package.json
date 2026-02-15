@@ -5,16 +5,23 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "nodemon server.js"
   },
-  "keywords": ["fast-share", "chat", "files", "express", "sqlite"],
+  "keywords": [
+    "fast-share",
+    "chat",
+    "files",
+    "express",
+    "sqlite"
+  ],
   "license": "MIT",
   "dependencies": {
     "better-sqlite3": "^11.6.0",
-    "dotenv": "^16.4.5",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
     "express": "^4.21.0",
-    "multer": "^1.4.5-lts.1"
+    "multer": "^1.4.5-lts.1",
+    "nodemon": "^3.1.11"
   }
 }
