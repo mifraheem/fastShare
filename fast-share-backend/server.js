@@ -13,9 +13,14 @@ const { getDb } = require('./db/connection');
 const { migrate } = require('./db/migrate');
 const routes = require('./routes');
 
-// Initialize database and run migrations
-getDb();
-migrate();
+// Initialize database and run migrations (don't crash process if DB fails)
+try {
+  getDb();
+  migrate();
+} catch (err) {
+  console.error('Database init failed:', err.message);
+  console.error('Server will start but API will return errors until DB is fixed.');
+}
 
 const app = express();
 
