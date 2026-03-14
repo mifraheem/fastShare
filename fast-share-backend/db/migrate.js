@@ -57,6 +57,8 @@ const schema = `
     uploader_client_id INTEGER NOT NULL,
     filename TEXT NOT NULL,
     path TEXT NOT NULL,
+    cloudinary_public_id TEXT,
+    cloudinary_url TEXT,
     size INTEGER NOT NULL DEFAULT 0,
     downloaded INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
@@ -81,6 +83,23 @@ function migrate() {
   // Add clients.name for display names (ignore error if column already exists)
   try {
     db.exec("ALTER TABLE clients ADD COLUMN name TEXT DEFAULT ''");
+  } catch (e) {
+    if (!e.message.includes('duplicate column name')) {
+      throw e;
+    }
+  }
+
+  // Add Cloudinary columns to files table (ignore error if columns already exist)
+  try {
+    db.exec("ALTER TABLE files ADD COLUMN cloudinary_public_id TEXT");
+  } catch (e) {
+    if (!e.message.includes('duplicate column name')) {
+      throw e;
+    }
+  }
+
+  try {
+    db.exec("ALTER TABLE files ADD COLUMN cloudinary_url TEXT");
   } catch (e) {
     if (!e.message.includes('duplicate column name')) {
       throw e;

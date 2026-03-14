@@ -37,5 +37,11 @@ module.exports = {
   MIN_EXTEND_MINUTES: 1,
   MAX_EXTEND_MINUTES: 60,
   // Display name max length
-  MAX_CLIENT_NAME_LENGTH: 15
+  MAX_CLIENT_NAME_LENGTH: 15,
+  // Storage configuration: 'disk' or 'cloudinary'
+  STORAGE_TYPE: process.env.STORAGE_TYPE || 'cloudinary',
+  // Cloudinary configuration
+  CLOUDINARY_CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME,
+  CLOUDINARY_API_KEY: process.env.CLOUDINARY_API_KEY,
+  CLOUDINARY_API_SECRET: process.env.CLOUDINARY_API_SECRET
 };

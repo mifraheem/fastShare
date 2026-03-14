@@ -230,9 +230,19 @@ export default function RoomView() {
 
   const handleFileDownload = async (id: number, filename: string) => {
     try {
-      await downloadFile(id, filename);
+      const file = files.find(f => f.id === id);
+      await downloadFile(id, filename, file?.url);
     } catch {
       toast.error("Failed to download file");
+    }
+  };
+
+  const handleFilePreview = async (id: number, filename: string) => {
+    const file = files.find(f => f.id === id);
+    if (file?.url) {
+      window.open(file.url, '_blank');
+    } else {
+      toast.error("Preview not available for this file");
     }
   };
 
@@ -456,6 +466,7 @@ export default function RoomView() {
                       files={files}
                       onDownload={handleFileDownload}
                       onDelete={handleFileDelete}
+                      onPreview={handleFilePreview}
                     />
                   )}
                 </div>

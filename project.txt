@@ -1,0 +1,216 @@
+# FastShare — Full Project Context for AI/LLM
+
+This document describes the FastShare codebase so an AI or developer can understand the full context: purpose, architecture, stack, data flow, and where key logic lives.
+
+---
+
+## 1. What FastShare Is
+
+**FastShare** is a web app for **private, temporary rooms** where users can:
+- **Chat** in real time (send, edit, delete messages; rich text with sanitized HTML)
+- **Share files** (upload, list, download, delete; owner/admin can delete any file)
+- **Create or join rooms** via a short **room code** (e.g. 6-character code like `ABC123`)
+
+There is **no user accounts**. Identity is **client-based**: a UUID stored in a cookie (`X-Client-UUID`) and sent to the backend. The backend creates or resolves a **client** record per UUID; clients can set a **display name** (max 15 chars) via `PUT /me`. Rooms have an **owner** (creator) and **members**; rooms **expire** after a configurable TTL (default ~50 minutes) and can be **extended** by the owner.
+
+**Live:** Frontend at [room.ifraheem.dev](https://room.ifraheem.dev), backend API at fastshare-api.ifraheem.dev. Frontend is hosted on **Vercel**, backend on **Hostinger** (Node.js).
+
+---
+
+## 2. Repository Layout
+
+```
+fastShare/                      # monorepo root
+├── README.md                   # Product overview, repo structure, contributing
+├── project.txt                 # This file
+├── fast-share-frontend/        # React SPA (Vite, TypeScript, Tailwind)
+│   ├── src/
+│   │   ├── api/                # HTTP client + API modules (rooms, messages, files, me)
+│   │   ├── components/         # UI (ThemeToggle, ChatMessage, FileList, modals, shadcn/ui)
+│   │   ├── contexts/          # DisplayNameContext
+│   │   ├── hooks/             # React Query hooks (useRooms, useMessages, useFiles)
+│   │   ├── lib/               # clientUUID, displayName, sanitize, utils
+│   │   ├── pages/             # Index (home), RoomView (room page), NotFound
+│   │   ├── App.tsx, main.tsx, index.css
+│   │   └── ...
+│   ├── .env                   # VITE_API_BASE_URL (backend URL)
+│   └── package.json
+└── fast-share-backend/         # Node.js + Express API (plain JavaScript)
+    ├── server.js               # Entry: DB init, CORS, rate limit, routes
+    ├── config/index.js         # PORT, DB_PATH, CORS, rate limit, TTLs, etc.
+    ├── db/
+    │   ├── connection.js       # SQLite (better-sqlite3) singleton
+    │   └── migrate.js          # Schema: clients, rooms, room_members, messages, files
+    ├── middleware/client.js    # X-Client-UUID → req.clientId / req.clientUuid (get or create client)
+    ├── handlers/               # me, rooms, messages, files, health
+    ├── routes/index.js         # Express route registration
+    ├── helpers/responses.js    # ok(res, status, data) / fail(res, status, code, message)
+    ├── utils/                  # room name generation, room code generation
+    ├── storage/disk.js         # ensureDir, resolveFileName (unique filenames on conflict)
+    ├── .env.example
+    └── package.json
+```
+
+---
+
+## 3. Tech Stack Summary
+
+| Layer     | Technologies |
+|----------|--------------|
+| Frontend | React 18, Vite, TypeScript, Tailwind CSS, React Router, TanStack React Query, Framer Motion, Radix UI–style components (shadcn), next-themes (dark/light), DOMPurify (message sanitization), Sonner (toasts), uuid |
+| Backend  | Node.js, Express, **better-sqlite3** (SQLite), **multer** (file upload, memory storage), dotenv, cors, express-rate-limit, cookie-parser |
+| Hosting  | Frontend: Vercel. Backend: Hostinger (Node.js). DB and files on backend server (SQLite file + `media/` directory). |
+
+---
+
+## 4. Backend Deep Dive
+
+### 4.1 Entry and Middleware (server.js)
+
+- **dotenv** loads `.env`.
+- **Database:** `getDb()` + `migrate()`. If DB init fails, the server still starts but API calls will error (logged).
+- **CORS:** `origin: true` (allow all origins), methods GET/POST/PUT/DELETE/OPTIONS/PATCH, headers include `X-Client-UUID`, credentials allowed.
+- **Rate limit:** Global limiter; window and max from config (e.g. 120 req/min per IP). **Skipped** for `req.path === '/health'` (note: route is actually `GET /`, not `GET /health` in the code).
+- **Body parsing:** `express.json()` and `express.text()` for plain-text message bodies.
+- **Routes:** Mounted at `/` (see routes/index.js). 404 and global error handler return JSON `{ ok: false, error: { code, message } }`.
+
+### 4.2 Configuration (config/index.js)
+
+- **PORT** (default 8000), **DB_PATH** (default `app.db`).
+- **CORS_ORIGINS:** From env or default localhost/5173/8080 (backend actually uses `origin: true` in server.js, so this is for reference).
+- **RATE_LIMIT_WINDOW_MS**, **RATE_LIMIT_MAX** (e.g. 60_000 ms, 120).
+- **DEFAULT_ROOM_TTL_SECONDS** (e.g. 3000), **DEFAULT_CLIENT_TTL_SECONDS** (e.g. 86400).
+- **MIN_EXTEND_MINUTES**, **MAX_EXTEND_MINUTES** (e.g. 1–60).
+- **MAX_CLIENT_NAME_LENGTH** (15).
+
+### 4.3 Client Identity (middleware/client.js)
+
+- **X-Client-UUID** header: required for almost all API routes. Must be non-empty, length ≥ 8.
+- **attachClient** middleware: reads UUID, calls **getOrCreateClient(uuid)** (select by uuid; if missing, insert into `clients` and refresh `expires_at` on hit). Sets **req.clientId** and **req.clientUuid**.
+- **nowUnix()**, **isSqliteBusy(err)** used for expiry and retry logic.
+
+### 4.4 Database Schema (db/migrate.js)
+
+- **clients:** id, uuid (unique), expires_at, created_at; later migration adds **name** (display name).
+- **rooms:** id, code (unique), name, owner_client_id, expires_at, created_at, updated_at.
+- **room_members:** room_id, client_id, role ('owner' | 'member' | 'admin'), joined_at; UNIQUE(room_id, client_id); CASCADE on room/client delete.
+- **messages:** id, room_id, sender_client_id, content, created_at.
+- **files:** id, room_id, uploader_client_id, filename, path (on disk), size, downloaded (counter), created_at.
+
+Indexes on clients(uuid), rooms(code), room_members, messages(room_id, id), files(room_id).
+
+### 4.5 API Response Shape
+
+- Success: `{ ok: true, data: <payload> }`.
+- Error: `{ ok: false, error: { code: string, message: string } }`.
+- HTTP status: 200/201 for success, 400/403/404/410/429/500/503 as appropriate.
+
+### 4.6 Routes and Handlers (routes/index.js)
+
+- **GET /** — Health (healthHandler.getHealth): checks DB connection, returns 200 + message. No X-Client-UUID.
+- **PUT /me** — Set display name (body: `{ name }`), max 15 chars. attachClient.
+- **POST /rooms** — Create room (optional body `{ name }`). attachClient. Returns code, name, owner, expires_at, etc.
+- **POST /rooms/:code/join** — Join room. attachClient. Returns status, code, name, expires_at, expires_in.
+- **GET /rooms/joined** — List rooms the client has joined. Query `include_expired=true` to include expired. attachClient.
+- **GET /rooms/:code** — Room detail + members (must be member). attachClient. Used for timer (expires_at, expires_in) and member list.
+- **DELETE /rooms/:code** — Delete room (owner only). attachClient.
+- **POST /rooms/:code/extend** — Extend room (owner only). Body/query `minutes` (1–60). attachClient.
+- **POST /rooms/:code/messages** — Send message. Body: **plain text** (Content-Type text/plain). attachClient.
+- **GET /rooms/:code/messages** — List messages. Query: `after`, `limit` (default 50, max 100). attachClient. Returns messages with sender_name (from clients.name).
+- **PUT /messages/:id** — Update own message (body plain text). attachClient.
+- **DELETE /messages/:id** — Delete message (sender or room owner/admin). attachClient.
+- **GET /rooms/:code/files** — List files in room. attachClient.
+- **POST /rooms/:code/files** — Upload file (multer `upload.single('file')`). attachClient. Files stored under `media/<roomCode>/`, unique filename via storage/disk.
+- **GET /files/:id/download** — Download file. Identity via **X-Client-UUID header or cookie** (attachClientForDownload). Must be room member; room must not be expired. Increments `downloaded` count.
+- **DELETE /files/:id** — Delete file (owner or admin of room only). attachClient.
+
+File upload limit: 50 MB (multer). Storage: disk under `media/<roomCode>/`.
+
+### 4.7 Handlers Summary
+
+- **rooms.js:** createRoom (generate code via utils/code.js, name via utils/room.js or body), joinRoom, getJoinedRooms, ownerDeleteRoom, ownerExtendRoom, getRoomDetail (with members + display names). Room expiry: expires_at vs nowUnix().
+- **messages.js:** sendMessage (plain text), getRoomMessages (with sender names), updateMessage (own only), deleteMessage (sender or owner/admin).
+- **files.js:** uploadFile (write buffer to disk, insert row), getRoomFiles, downloadFile (resolve client from header or cookie, send file), deleteFile (owner/admin only; delete row + unlink file).
+- **me.js:** putMe — update clients.name for req.clientId.
+- **health.js:** getHealth — getDb() and return 200 with message (or 500 if no db).
+
+### 4.8 Utilities and Storage
+
+- **utils/code.js:** 6-char room code from crypto random (alphabet without ambiguous chars).
+- **utils/room.js:** Human-friendly room name (e.g. "Quick River") from adjective + noun.
+- **storage/disk.js:** ensureDir(path), resolveFileName(dir, filename) for unique names (file(1).ext, etc.).
+
+---
+
+## 5. Frontend Deep Dive
+
+### 5.1 Entry and App (main.tsx, App.tsx)
+
+- **main.tsx:** Renders `<App />` into root, imports index.css.
+- **App.tsx:** On mount calls **ensureClientUUID()** (cookie-based UUID). Wraps app in QueryClientProvider, ThemeProvider (next-themes), TooltipProvider, Toaster/Sonner, BrowserRouter, **DisplayNameProvider**. Routes: `/` → Index, `/room/:roomName/:roomCode` → RoomView, `*` → NotFound.
+
+### 5.2 Client Identity and Display Name (Frontend)
+
+- **lib/clientUUID.ts:** Cookie `X-Client-UUID`. **ensureClientUUID()** reads cookie or generates new uuid (via `uuid` package) and sets cookie (long-lived). All API calls use this UUID.
+- **lib/displayName.ts:** localStorage key `fastShare_displayName`, max 15 chars. **ensureDisplayName()** returns existing or generates random “sigma” name. **generateRandomDisplayName()** picks from a fixed list.
+- **contexts/DisplayNameContext.tsx:** Holds **displayName** and **setDisplayName**. On load, syncs display name to backend via **putMe(name)**. setDisplayName updates localStorage, state, and PUT /me; invalidates room queries so member names refresh.
+
+### 5.3 API Layer (src/api/)
+
+- **http.ts:** **api(path, { method, body, headers })**. Uses **ensureClientUUID()** and sends **X-Client-UUID** on every request. Base URL from **VITE_API_BASE_URL**. Handles FormData (no Content-Type), plain text, and JSON. credentials: 'include'. Throws on !res.ok; returns JSON or undefined (e.g. for 204/download).
+- **rooms.api.ts:** createRoom, joinRoom, getJoinedRooms, getRoomDetail, deleteRoom, extendRoom. Typed responses (CreateRoomResponse, JoinedRoom, RoomDetailResponse, etc.).
+- **messages.api.ts:** sendMessage (body plain text), getRoomMessages(after?, limit?), updateMessage, deleteMessage. Types: Message, SendMessageResponse, GetMessagesResponse, etc.
+- **files.api.ts:** getRoomFiles, uploadFile (FormData with 'file'), deleteFile. **downloadFile(fileId)** uses raw **fetch** to backend `/files/:id/download` with **credentials: 'include'** (cookie sent); does not set X-Client-UUID header — backend accepts cookie for this route.
+- **me.api.ts:** putMe(name) — PUT /me with { name } (trimmed/sliced to 15).
+
+All API responses are typed as **ApiResponse<T>** = { ok: true, data } | { ok: false, error: { code, message } }. Hooks unwrap with **assertOk** and throw on error.
+
+### 5.4 React Query Hooks (src/hooks/)
+
+- **useRooms.ts:** useJoinedRooms(includeExpired), useRoomDetail(roomCode), useCreateRoom, useJoinRoom, useDeleteRoom, useExtendRoom. Mutations invalidate `["rooms", "joined"]` and/or `["rooms", code]`.
+- **useMessages.ts:** useRoomMessages(roomCode, { after, limit }), useSendMessage, useUpdateMessage, useDeleteMessage. Mutations invalidate `["rooms", roomCode, "messages"]`.
+- **useFiles.ts:** useRoomFiles(roomCode), useUploadFile, useDeleteFile; **useDownloadFile()** returns a function (fileId, filename) that fetches blob and triggers download via object URL.
+
+### 5.5 Pages
+
+- **Index.tsx:** Home. Create Room / Join Room cards; modals CreateRoomModal, JoinRoomModal. Lists “Your Rooms” via useJoinedRooms; RoomCard per room. On create/join success, navigates to `/room/<name-slug>/<code>`. Uses ThemeToggle, DisplayNameBadge.
+- **RoomView.tsx:** Room page. Params: roomName, roomCode. Fetches room detail (useRoomDetail) for timer and members; messages (useRoomMessages), files (useRoomFiles). ContentEditable composer; send/edit/delete message; upload/download/delete file. Owner: extend room (15/30/60 min), delete room (with confirmation). Countdown timer from roomDetail.expires_at. Copy room code. DisplayNameBadge, ThemeToggle. Chat tab and Files tab. Message content rendered with sanitized HTML (ChatMessage).
+
+### 5.6 Message Sanitization (lib/sanitize.ts)
+
+- **sanitizeMessageHtml(html):** DOMPurify with allowed tags (p, br, div, span, strong, em, lists, blockquote, pre, code, a) and href/target/rel. Used before sending and when pasting into composer (RoomView paste handler). Prevents XSS while keeping basic formatting.
+
+### 5.7 UI and Styling
+
+- Components under **components/**: ThemeToggle, DisplayNameBadge, CreateRoomModal, JoinRoomModal, RoomCard, ChatMessage, FileList, FileUpload, NavLink, plus many **components/ui/** (button, input, dialog, tabs, alert-dialog, etc.) — shadcn-style with Tailwind.
+- Styling: Tailwind, gradient-bg, glass-card, theme-aware (next-themes). Logo at `/logo.png`.
+
+---
+
+## 6. Data Flow Summary
+
+1. **First visit:** Frontend ensures cookie `X-Client-UUID` and display name (localStorage + PUT /me). Backend getOrCreateClient stores or updates client and sets name.
+2. **Create room:** POST /rooms (optional name) → backend creates room, inserts room_members as owner, returns code. Frontend navigates to `/room/<name>/<code>`.
+3. **Join room:** User enters code → POST /rooms/:code/join → backend adds member. Frontend navigates to same room URL.
+4. **In room:** GET /rooms/:code for detail and timer; GET /rooms/:code/messages and GET /rooms/:code/files. Send message: POST with text/plain. Upload: POST with multipart. Download: GET /files/:id/download (cookie or header). Edit/delete message and delete file go through respective handlers; owner can extend or delete room.
+5. **Polling:** Frontend uses React Query with queryKeys; no WebSockets. Refetch/invalidation on mutations. Room expiry is enforced server-side; timer is client countdown from expires_at.
+
+---
+
+## 7. Environment and Deployment
+
+- **Backend:** .env (or Hostinger env vars): PORT, DB_PATH, RATE_LIMIT_WINDOW_MS, RATE_LIMIT_MAX, optionally CORS_ORIGINS. Start: `node server.js` (or `npm start`). DB file and `media/` directory must be writable.
+- **Frontend:** .env: **VITE_API_BASE_URL** (e.g. https://fastshare-api.ifraheem.dev). Build: `vite build`; preview: `vite preview`.
+
+---
+
+## 8. Important Conventions for AI/LLM
+
+- **Identity:** Every authenticated request (except health and file download when using cookie) must send **X-Client-UUID**. Backend creates client on first use; display name is separate (PUT /me).
+- **Room access:** All room-scoped endpoints require the client to be a **room member** (and room not expired). Owner-only: delete room, extend room. Owner/admin: delete any message, delete any file.
+- **API contract:** Success is always `{ ok: true, data }`, error is `{ ok: false, error: { code, message } }`. Frontend types in rooms.api/messages.api/files.api/me.api and assertOk in hooks.
+- **Messages:** Stored and sent as plain text; frontend composer can produce HTML that is **sanitized** (DOMPurify) before send and when pasting. Backend does not re-sanitize; it stores content as received.
+- **Files:** Stored under `media/<roomCode>/` with deduplicated filenames. Metadata in SQLite; download requires room membership and non-expired room.
+- **Health:** Only **GET /** is implemented in routes; it runs a DB check. Rate limiter skip is for path `'/health'` (no such route in current code).
+
+Use this document as the single source of context for the FastShare project when making changes or answering questions about behavior, APIs, or architecture.

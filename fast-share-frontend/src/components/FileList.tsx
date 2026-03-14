@@ -7,6 +7,7 @@ import {
   File as FileIcon,
   Download,
   Trash2,
+  Eye,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { Button } from "@/components/ui/button";
@@ -16,6 +17,7 @@ interface FileListProps {
   files: FileItem[];
   onDownload?: (id: number, filename: string) => void;
   onDelete?: (id: number) => void;
+  onPreview?: (id: number, filename: string) => void;
 }
 
 /* =========================
@@ -32,6 +34,11 @@ function getFileType(filename: string) {
   if (["pdf", "doc", "docx", "txt"].includes(ext)) return "document";
 
   return "other";
+}
+
+function canPreviewFile(filename: string) {
+  const ext = filename.split(".").pop()?.toLowerCase();
+  return ext && ["png", "jpg", "jpeg", "gif", "webp", "pdf", "txt"].includes(ext);
 }
 
 const fileTypeIcons = {
@@ -58,6 +65,7 @@ export function FileList({
   files,
   onDownload,
   onDelete,
+  onPreview,
 }: FileListProps) {
   if (!files.length) {
     return (
@@ -104,6 +112,19 @@ export function FileList({
             </div>
 
             <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+              {onPreview && canPreviewFile(file.filename) && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={() =>
+                    onPreview(file.id, file.filename)
+                  }
+                >
+                  <Eye className="h-4 w-4" />
+                </Button>
+              )}
+
               {onDownload && (
                 <Button
                   variant="ghost"

@@ -12,6 +12,7 @@ export interface FileItem {
   size: number;
   downloaded: number;
   created_at: number; // unix seconds
+  url?: string; // Cloudinary URL for direct access
 }
 
 /* ---- Upload ---- */

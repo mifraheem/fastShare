@@ -8,7 +8,17 @@ const path = require('path');
 const { getDb } = require('../db/connection');
 const { ok, fail } = require('../helpers/responses');
 const { getClientUuid, nowUnix } = require('../middleware/client');
-const { ensureDir, resolveFileName } = require('../storage/disk');
+const config = require('../config');
+
+// Dynamic storage imports based on configuration
+let storageModule;
+if (config.STORAGE_TYPE === 'cloudinary') {
+  storageModule = require('../storage/cloudinary');
+} else {
+  storageModule = require('../storage/disk');
+}
+
+const { uploadFile: uploadToStorage, getFileUrl, getDownloadUrl, deleteFile: deleteFromStorage } = storageModule;
 
 const MEDIA_DIR = 'media';
 
@@ -40,7 +50,7 @@ function getClientIdForRequest(req) {
 }
 
 // --- Upload file ---
-function uploadFile(req, res) {
+async function uploadFile(req, res) {
   const code = (req.params.code || '').trim();
   if (!code) return fail(res, 400, 'BAD_REQUEST', 'missing room code');
 
@@ -58,38 +68,50 @@ function uploadFile(req, res) {
     return fail(res, 400, 'BAD_REQUEST', 'invalid filename');
   }
 
-  const roomDir = path.join(MEDIA_DIR, code);
-  ensureDir(roomDir);
-  const finalName = resolveFileName(roomDir, originalName);
-  const finalPath = path.join(roomDir, finalName);
-
   const buffer = req.file.buffer;
   const size = buffer.length;
-  try {
-    fs.writeFileSync(finalPath, buffer);
-  } catch (err) {
-    console.error('UploadFile write error:', err);
-    return fail(res, 500, 'STORAGE_ERROR', 'failed to save file');
-  }
-  const n = nowUnix();
 
   try {
-    const result = getDb().prepare(`
-      INSERT INTO files (room_id, uploader_client_id, filename, path, size, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(room.roomId, clientId, finalName, finalPath, size, n);
+    if (config.STORAGE_TYPE === 'cloudinary') {
+      // Upload to Cloudinary
+      const uploadResult = await storageModule.uploadFile(buffer, originalName, code);
 
-    return ok(res, 201, {
-      id: result.lastInsertRowid,
-      filename: finalName,
-      size,
-      path: finalPath,
-      uploaded_at: n
-    });
+      const n = nowUnix();
+
+      const result = getDb().prepare(`
+        INSERT INTO files (room_id, uploader_client_id, filename, path, cloudinary_public_id, cloudinary_url, size, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(room.roomId, clientId, uploadResult.original_filename || originalName, '', uploadResult.public_id, uploadResult.secure_url, size, n);
+
+      return ok(res, 201, {
+        id: result.lastInsertRowid,
+        filename: uploadResult.original_filename || originalName,
+        size,
+        url: uploadResult.secure_url,
+        uploaded_at: n
+      });
+    } else {
+      // Upload to disk (original logic)
+      const uploadResult = await storageModule.uploadFile(buffer, originalName, code);
+
+      const n = nowUnix();
+
+      const result = getDb().prepare(`
+        INSERT INTO files (room_id, uploader_client_id, filename, path, size, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(room.roomId, clientId, uploadResult.filename, uploadResult.path, size, n);
+
+      return ok(res, 201, {
+        id: result.lastInsertRowid,
+        filename: uploadResult.filename,
+        size,
+        path: uploadResult.path,
+        uploaded_at: n
+      });
+    }
   } catch (err) {
-    fs.unlinkSync(finalPath);
-    console.error('UploadFile db error:', err);
-    return fail(res, 500, 'DB_WRITE_FAILED', 'failed to save file metadata');
+    console.error('UploadFile error:', err);
+    return fail(res, 500, 'STORAGE_ERROR', `failed to ${config.STORAGE_TYPE === 'cloudinary' ? 'upload' : 'save'} file`);
   }
 }
 
@@ -105,18 +127,43 @@ function getRoomFiles(req, res) {
     return fail(res, 410, 'ROOM_EXPIRED', 'room expired');
   }
 
-  const rows = getDb().prepare(`
-    SELECT id, filename, size, downloaded, created_at
-    FROM files WHERE room_id = ? ORDER BY id DESC
-  `).all(room.roomId);
+  let query;
+  let selectFields;
+  
+  if (config.STORAGE_TYPE === 'cloudinary') {
+    selectFields = 'id, filename, size, downloaded, created_at, cloudinary_url';
+    query = `
+      SELECT ${selectFields}
+      FROM files WHERE room_id = ? ORDER BY id DESC
+    `;
+  } else {
+    selectFields = 'id, filename, size, downloaded, created_at';
+    query = `
+      SELECT ${selectFields}
+      FROM files WHERE room_id = ? ORDER BY id DESC
+    `;
+  }
 
-  const files = rows.map((f) => ({
-    id: f.id,
-    filename: f.filename,
-    size: f.size,
-    downloaded: f.downloaded,
-    created_at: f.created_at
-  }));
+  const rows = getDb().prepare(query).all(room.roomId);
+
+  const files = rows.map((f) => {
+    const fileData = {
+      id: f.id,
+      filename: f.filename,
+      size: f.size,
+      downloaded: f.downloaded,
+      created_at: f.created_at
+    };
+
+    if (config.STORAGE_TYPE === 'cloudinary') {
+      fileData.url = f.cloudinary_url;
+    } else {
+      // For disk storage, provide download endpoint URL
+      fileData.url = `/api/files/${f.id}/download`;
+    }
+
+    return fileData;
+  });
 
   return ok(res, 200, { files });
 }
@@ -129,42 +176,76 @@ function downloadFile(req, res) {
   const clientId = getClientIdForRequest(req);
   if (!clientId) return fail(res, 400, 'BAD_REQUEST', 'missing client identity');
 
-  const row = getDb().prepare(`
-    SELECT f.filename, f.path, r.expires_at
-    FROM files f
-    JOIN rooms r ON r.id = f.room_id
-    JOIN room_members rm ON rm.room_id = r.id
-    WHERE f.id = ? AND rm.client_id = ?
-  `).get(fileId, clientId);
+  let query;
+  if (config.STORAGE_TYPE === 'cloudinary') {
+    query = `
+      SELECT f.filename, f.cloudinary_url, f.cloudinary_public_id, r.expires_at
+      FROM files f
+      JOIN rooms r ON r.id = f.room_id
+      JOIN room_members rm ON rm.room_id = r.id
+      WHERE f.id = ? AND rm.client_id = ?
+    `;
+  } else {
+    query = `
+      SELECT f.filename, f.path, r.expires_at
+      FROM files f
+      JOIN rooms r ON r.id = f.room_id
+      JOIN room_members rm ON rm.room_id = r.id
+      WHERE f.id = ? AND rm.client_id = ?
+    `;
+  }
+
+  const row = getDb().prepare(query).get(fileId, clientId);
 
   if (!row) return fail(res, 404, 'NOT_FOUND', 'file not found or no access');
   if (row.expires_at <= nowUnix()) {
     return fail(res, 410, 'ROOM_EXPIRED', 'room expired');
   }
 
-  if (!fs.existsSync(row.path)) {
-    return fail(res, 404, 'NOT_FOUND', 'file missing on disk');
-  }
-
   getDb().prepare('UPDATE files SET downloaded = downloaded + 1 WHERE id = ?').run(fileId);
 
   res.setHeader('Content-Disposition', 'attachment; filename="' + row.filename + '"');
-  return res.sendFile(path.resolve(row.path));
+
+  if (config.STORAGE_TYPE === 'cloudinary') {
+    if (!row.cloudinary_url) {
+      return fail(res, 404, 'NOT_FOUND', 'file not available');
+    }
+    // Modify the secure URL to force download by adding fl_attachment
+    const downloadUrl = row.cloudinary_url.replace('/upload/', '/upload/fl_attachment/');
+    return res.redirect(downloadUrl);
+  } else {
+    if (!fs.existsSync(row.path)) {
+      return fail(res, 404, 'NOT_FOUND', 'file missing on disk');
+    }
+    return res.sendFile(path.resolve(row.path));
+  }
 }
 
 // --- Delete file (owner/admin only) ---
-function deleteFile(req, res) {
+async function deleteFile(req, res) {
   const fileId = parseInt(req.params.id, 10);
   if (!fileId || fileId <= 0) return fail(res, 400, 'BAD_REQUEST', 'invalid id');
 
   const clientId = req.clientId;
 
-  const fileRow = getDb().prepare(`
-    SELECT f.room_id, f.path, r.expires_at
-    FROM files f
-    JOIN rooms r ON r.id = f.room_id
-    WHERE f.id = ?
-  `).get(fileId);
+  let query;
+  if (config.STORAGE_TYPE === 'cloudinary') {
+    query = `
+      SELECT f.room_id, f.cloudinary_public_id, r.expires_at
+      FROM files f
+      JOIN rooms r ON r.id = f.room_id
+      WHERE f.id = ?
+    `;
+  } else {
+    query = `
+      SELECT f.room_id, f.path, r.expires_at
+      FROM files f
+      JOIN rooms r ON r.id = f.room_id
+      WHERE f.id = ?
+    `;
+  }
+
+  const fileRow = getDb().prepare(query).get(fileId);
 
   if (!fileRow) return fail(res, 404, 'NOT_FOUND', 'file not found');
 
@@ -174,14 +255,27 @@ function deleteFile(req, res) {
     return fail(res, 403, 'FORBIDDEN', 'only owner or admin can delete file');
   }
 
-  getDb().prepare('DELETE FROM files WHERE id = ?').run(fileId);
-  if (fs.existsSync(fileRow.path)) {
-    try {
-      fs.unlinkSync(fileRow.path);
-    } catch (e) {
-      console.error('DeleteFile unlink error:', e);
+  // Delete from storage
+  if (config.STORAGE_TYPE === 'cloudinary') {
+    if (fileRow.cloudinary_public_id) {
+      try {
+        await storageModule.deleteFile(fileRow.cloudinary_public_id);
+      } catch (e) {
+        console.error('DeleteFile Cloudinary error:', e);
+        // Continue with DB deletion even if Cloudinary delete fails
+      }
+    }
+  } else {
+    if (fileRow.path && fs.existsSync(fileRow.path)) {
+      try {
+        fs.unlinkSync(fileRow.path);
+      } catch (e) {
+        console.error('DeleteFile unlink error:', e);
+      }
     }
   }
+
+  getDb().prepare('DELETE FROM files WHERE id = ?').run(fileId);
 
   return ok(res, 200, { status: 'deleted', id: fileId });
 }
