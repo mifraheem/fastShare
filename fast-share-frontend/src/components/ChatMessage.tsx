@@ -13,6 +13,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { sanitizeMessageHtml, isHtml, htmlToPlainText } from "@/lib/sanitize";
+import { avatarGradient, avatarInitials } from "@/lib/avatar";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
 interface ChatMessageProps {
@@ -20,6 +22,8 @@ interface ChatMessageProps {
   index: number;
   /** Numeric API id – when set with onEdit/onDelete, shows edit/delete for own messages */
   messageId?: number;
+  /** When true this message is grouped under the previous one (same sender) – hide avatar + name */
+  grouped?: boolean;
   onEdit?: (id: number, content: string) => void;
   onDelete?: (id: number) => void;
   isUpdating?: boolean;
@@ -30,6 +34,7 @@ export function ChatMessage({
   message,
   index,
   messageId,
+  grouped = false,
   onEdit,
   onDelete,
   isUpdating,
@@ -93,72 +98,48 @@ export function ChatMessage({
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20, scale: 0.95 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ delay: index * 0.05, type: "spring", stiffness: 200 }}
-      className={`flex gap-3 ${isOwn ? "flex-row-reverse" : ""}`}
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.18, ease: "easeOut" }}
+      className={cn(
+        "flex gap-2.5 px-1",
+        grouped ? "mt-0.5" : "mt-3 first:mt-0",
+        isOwn && "flex-row-reverse",
+      )}
     >
-      <motion.div
-        whileHover={{ scale: 1.1 }}
-        className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center text-sm font-semibold ${
-          isOwn
-            ? "bg-gradient-to-br from-primary to-accent text-primary-foreground"
-            : "bg-secondary text-secondary-foreground"
-        }`}
-      >
-        {message.avatar}
-      </motion.div>
-
-      <div className={`flex flex-col gap-1 max-w-[70%] ${isOwn ? "items-end" : ""}`}>
-        <div className={`flex items-center gap-2 ${isOwn ? "flex-row-reverse" : ""}`}>
-          <span className="text-sm font-medium text-foreground">
-            {message.sender}
-          </span>
-          <span className="text-xs text-muted-foreground">
-            {format(message.timestamp, "h:mm a")}
-          </span>
-          {canMutate && !isEditing && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 opacity-70 hover:opacity-100"
-                >
-                  <MoreVertical className="h-4 w-4" />
-                  <span className="sr-only">Message actions</span>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align={isOwn ? "end" : "start"}>
-                {onEdit && (
-                  <DropdownMenuItem
-                    onClick={() => setIsEditing(true)}
-                    disabled={isUpdating}
-                  >
-                    <Pencil className="h-4 w-4 mr-2" />
-                    Edit
-                  </DropdownMenuItem>
-                )}
-                {onDelete && (
-                  <DropdownMenuItem
-                    onClick={() => onDelete(messageId!)}
-                    disabled={isDeleting}
-                    className="text-destructive focus:text-destructive"
-                  >
-                    <Trash2 className="h-4 w-4 mr-2" />
-                    Delete
-                  </DropdownMenuItem>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
+      {/* Avatar (or spacer to keep grouped messages aligned) */}
+      {grouped ? (
+        <div className="w-9 shrink-0" aria-hidden />
+      ) : (
+        <div
+          className={cn(
+            "shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-xs font-semibold text-white shadow-sm ring-1 ring-black/5 select-none bg-gradient-to-br",
+            isOwn ? "from-primary to-accent" : avatarGradient(message.sender),
           )}
+          title={message.sender}
+        >
+          {avatarInitials(message.sender)}
         </div>
+      )}
+
+      <div className={cn("flex flex-col gap-1 max-w-[78%] sm:max-w-[70%]", isOwn && "items-end")}>
+        {!grouped && (
+          <div className={cn("flex items-center gap-2 px-1", isOwn && "flex-row-reverse")}>
+            <span className="text-[13px] font-semibold text-foreground leading-none">
+              {message.sender}
+            </span>
+            <span className="text-[11px] text-muted-foreground leading-none tabular-nums">
+              {format(message.timestamp, "h:mm a")}
+            </span>
+          </div>
+        )}
 
         {isEditing ? (
           <div
-            className={`px-3 py-2 rounded-2xl min-w-[200px] ${
-              isOwn ? "chat-bubble-own" : "chat-bubble-other"
-            }`}
+            className={cn(
+              "px-3 py-2 rounded-2xl min-w-[220px]",
+              isOwn ? "chat-bubble-own" : "chat-bubble-other",
+            )}
           >
             {contentIsHtml ? (
               <div
@@ -215,32 +196,85 @@ export function ChatMessage({
             </div>
           </div>
         ) : (
-          <motion.div
-            whileHover={{ scale: 1.01 }}
-            className={`group relative px-4 py-3 ${isOwn ? "chat-bubble-own" : "chat-bubble-other"} ${isDeleting ? "opacity-50" : ""}`}
-          >
-            {contentIsHtml ? (
-              <div
-                className="text-sm leading-relaxed prose prose-sm dark:prose-invert max-w-none [&_p]:my-1 [&_ul]:my-2 [&_ol]:my-2 [&_li]:my-0.5 [&_h1]:text-base [&_h2]:text-sm [&_h3]:text-sm"
-                dangerouslySetInnerHTML={{ __html: displayContent }}
-              />
-            ) : (
-              <p className="text-sm leading-relaxed">{message.content}</p>
-            )}
-            <Button
-              variant="ghost"
-              size="icon"
-              className="absolute top-1.5 right-1.5 h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity rounded-full bg-background/80 hover:bg-background"
-              onClick={handleCopyMessage}
-              title="Copy message"
-            >
-              {copied ? (
-                <CheckCheck className="h-3.5 w-3.5 text-green-600" />
-              ) : (
-                <Copy className="h-3.5 w-3.5" />
+          <div className={cn("group relative", isDeleting && "opacity-50")}>
+            <div
+              className={cn(
+                "px-3.5 py-2 shadow-sm transition-colors",
+                isOwn ? "chat-bubble-own" : "chat-bubble-other",
+                // soften the grouped corner so stacked bubbles read as one block
+                grouped && (isOwn ? "rounded-tr-md" : "rounded-tl-md"),
               )}
-            </Button>
-          </motion.div>
+            >
+              {contentIsHtml ? (
+                <div
+                  className="text-sm leading-relaxed prose prose-sm dark:prose-invert max-w-none [&_p]:my-1 [&_ul]:my-2 [&_ol]:my-2 [&_li]:my-0.5 [&_h1]:text-base [&_h2]:text-sm [&_h3]:text-sm [&_a]:underline"
+                  dangerouslySetInnerHTML={{ __html: displayContent }}
+                />
+              ) : (
+                <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
+                  {message.content}
+                </p>
+              )}
+            </div>
+
+            {/* Hover actions */}
+            <div
+              className={cn(
+                "absolute top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity",
+                isOwn ? "right-full mr-1.5" : "left-full ml-1.5",
+              )}
+            >
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 rounded-full bg-background/90 border border-border/60 shadow-sm hover:bg-background"
+                onClick={handleCopyMessage}
+                title="Copy message"
+              >
+                {copied ? (
+                  <CheckCheck className="h-3.5 w-3.5 text-success" />
+                ) : (
+                  <Copy className="h-3.5 w-3.5" />
+                )}
+              </Button>
+
+              {canMutate && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 rounded-full bg-background/90 border border-border/60 shadow-sm hover:bg-background"
+                    >
+                      <MoreVertical className="h-3.5 w-3.5" />
+                      <span className="sr-only">Message actions</span>
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align={isOwn ? "end" : "start"}>
+                    {onEdit && (
+                      <DropdownMenuItem
+                        onClick={() => setIsEditing(true)}
+                        disabled={isUpdating}
+                      >
+                        <Pencil className="h-4 w-4 mr-2" />
+                        Edit
+                      </DropdownMenuItem>
+                    )}
+                    {onDelete && (
+                      <DropdownMenuItem
+                        onClick={() => onDelete(messageId!)}
+                        disabled={isDeleting}
+                        className="text-destructive focus:text-destructive"
+                      >
+                        <Trash2 className="h-4 w-4 mr-2" />
+                        Delete
+                      </DropdownMenuItem>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+            </div>
+          </div>
         )}
       </div>
     </motion.div>

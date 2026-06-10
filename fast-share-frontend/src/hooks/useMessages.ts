@@ -1,5 +1,10 @@
 // src/hooks/useMessages.ts
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import {
   sendMessage,
   getRoomMessages,
@@ -42,6 +47,11 @@ export function useRoomMessages(
       return assertOk(res);
     },
     enabled: !!roomCode,
+    // Live chat: poll for new messages, keep showing the old list while
+    // refetching so the view never flickers or jumps.
+    refetchInterval: 3000,
+    refetchOnWindowFocus: true,
+    placeholderData: keepPreviousData,
   });
 }
 

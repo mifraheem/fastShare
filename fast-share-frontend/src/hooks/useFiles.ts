@@ -1,6 +1,11 @@
 // src/hooks/useFiles.ts
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import {
   getRoomFiles,
   uploadFile,
@@ -39,6 +44,10 @@ export function useRoomFiles(roomCode: string) {
       return assertOk(res);
     },
     enabled: !!roomCode,
+    // Keep the file list live as others upload, without flicker.
+    refetchInterval: 5000,
+    refetchOnWindowFocus: true,
+    placeholderData: keepPreviousData,
   });
 }
 

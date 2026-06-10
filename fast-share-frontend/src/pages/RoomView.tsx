@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
+import { format, isToday, isYesterday } from "date-fns";
 import {
   ArrowLeft,
   Copy,
@@ -12,10 +13,14 @@ import {
   Clock,
   Trash2,
   Info,
+  ChevronDown,
+  MessagesSquare,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   AlertDialog,
@@ -63,6 +68,10 @@ export default function RoomView() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const atBottomRef = useRef(true);
+  const prevMsgCountRef = useRef(0);
+  const [showScrollButton, setShowScrollButton] = useState(false);
 
   /* =========================
      Room detail (for timer)
@@ -117,12 +126,39 @@ export default function RoomView() {
   }, [roomDetail?.expires_at]);
 
   /* =========================
-     Auto-scroll messages
+     Smart auto-scroll
+     - jump to bottom on first load
+     - follow new messages only when already at the bottom
+     - otherwise show a "jump to latest" button
   ========================= */
 
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    messagesEndRef.current?.scrollIntoView({ behavior });
+    atBottomRef.current = true;
+    setShowScrollButton(false);
+  }, []);
+
+  const handleMessagesScroll = useCallback(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const distanceFromBottom =
+      el.scrollHeight - el.scrollTop - el.clientHeight;
+    atBottomRef.current = distanceFromBottom < 80;
+    setShowScrollButton(distanceFromBottom > 240);
+  }, []);
+
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length]);
+    const count = messages.length;
+    const prev = prevMsgCountRef.current;
+    prevMsgCountRef.current = count;
+    if (count === 0) return;
+    // First batch: jump instantly. New messages while pinned to bottom: glide.
+    if (prev === 0) {
+      scrollToBottom("auto");
+    } else if (count > prev && atBottomRef.current) {
+      scrollToBottom("smooth");
+    }
+  }, [messages.length, scrollToBottom]);
 
   /* =========================
      Helpers
@@ -291,6 +327,52 @@ export default function RoomView() {
   ] as const;
 
   /* =========================
+     Group messages + day separators
+  ========================= */
+
+  const dayLabel = (date: Date) => {
+    if (isToday(date)) return "Today";
+    if (isYesterday(date)) return "Yesterday";
+    return format(date, "EEEE, MMMM d");
+  };
+
+  type ChatItem =
+    | { kind: "separator"; key: string; label: string }
+    | {
+        kind: "message";
+        key: string;
+        index: number;
+        msg: (typeof messages)[number];
+        grouped: boolean;
+      };
+
+  const chatItems = useMemo<ChatItem[]>(() => {
+    const items: ChatItem[] = [];
+    let prev: (typeof messages)[number] | null = null;
+    messages.forEach((msg, index) => {
+      const date = new Date(msg.created_at * 1000);
+      const newDay =
+        !prev ||
+        new Date(prev.created_at * 1000).toDateString() !== date.toDateString();
+      if (newDay) {
+        items.push({
+          kind: "separator",
+          key: `sep-${msg.id}`,
+          label: dayLabel(date),
+        });
+      }
+      const grouped =
+        !newDay &&
+        !!prev &&
+        prev.sender_client_id === msg.sender_client_id &&
+        msg.created_at - prev.created_at < 300;
+      items.push({ kind: "message", key: String(msg.id), index, msg, grouped });
+      prev = msg;
+    });
+    return items;
+  }, [messages]);
+
+  /* =========================
      Render
   ========================= */
 
@@ -377,42 +459,122 @@ export default function RoomView() {
               {/* Chat - full height */}
               <TabsContent value="chat" className="flex-1 flex flex-col min-h-0 mt-0 data-[state=inactive]:hidden">
                 <div className="glass-card flex-1 flex flex-col min-h-0 rounded-lg overflow-hidden">
-                  <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4">
-                    {messagesLoading && (
-                      <p className="text-sm text-muted-foreground">
-                        Loading messages…
-                      </p>
+                  <div className="relative flex-1 flex flex-col min-h-0">
+                  <div
+                    ref={scrollContainerRef}
+                    onScroll={handleMessagesScroll}
+                    className="flex-1 min-h-0 overflow-y-auto px-2 sm:px-3 py-3 sm:py-4 scroll-smooth"
+                  >
+                    {/* Loading skeletons */}
+                    {messagesLoading && messages.length === 0 && (
+                      <div className="space-y-4">
+                        {[0, 1, 2, 3].map((i) => (
+                          <div
+                            key={i}
+                            className={cn(
+                              "flex gap-2.5 px-1",
+                              i % 2 === 1 && "flex-row-reverse",
+                            )}
+                          >
+                            <Skeleton className="h-9 w-9 rounded-full shrink-0" />
+                            <div
+                              className={cn(
+                                "flex flex-col gap-1.5",
+                                i % 2 === 1 && "items-end",
+                              )}
+                            >
+                              <Skeleton className="h-3 w-24 rounded" />
+                              <Skeleton className="h-9 w-44 sm:w-64 rounded-2xl" />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
                     )}
 
-                    {messages.map((msg, index) => (
-                      <ChatMessage
-                        key={msg.id}
-                        index={index}
-                        message={{
-                          id: String(msg.id),
-                          sender:
-                            msg.sender_name ||
-                            (msg.mine ? displayName : "Member"),
-                          content: msg.content,
-                          timestamp: new Date(msg.created_at * 1000),
-                          isOwn: msg.mine ?? false,
-                          avatar: msg.mine ? "ME" : "U",
-                        }}
-                        messageId={msg.id}
-                        onEdit={handleEditMessage}
-                        onDelete={handleDeleteMessage}
-                        isUpdating={
-                          updateMessageMutation.isPending &&
-                          updateMessageMutation.variables?.id === msg.id
-                        }
-                        isDeleting={
-                          deleteMessageMutation.isPending &&
-                          deleteMessageMutation.variables === msg.id
-                        }
-                      />
-                    ))}
-                    <div ref={messagesEndRef} />
+                    {/* Empty state */}
+                    {!messagesLoading && messages.length === 0 && (
+                      <div className="h-full flex flex-col items-center justify-center text-center px-6 py-12">
+                        <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center mb-4">
+                          <MessagesSquare className="h-7 w-7 text-primary" />
+                        </div>
+                        <p className="font-medium text-foreground">
+                          No messages yet
+                        </p>
+                        <p className="text-sm text-muted-foreground mt-1 max-w-xs">
+                          Say hello and start the conversation — everyone in this
+                          room will see it instantly.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Messages */}
+                    {chatItems.map((item) =>
+                      item.kind === "separator" ? (
+                        <div
+                          key={item.key}
+                          className="flex items-center gap-3 my-4 px-2 select-none"
+                        >
+                          <div className="h-px flex-1 bg-border/60" />
+                          <span className="text-[11px] font-medium text-muted-foreground bg-secondary/70 px-2.5 py-0.5 rounded-full">
+                            {item.label}
+                          </span>
+                          <div className="h-px flex-1 bg-border/60" />
+                        </div>
+                      ) : (
+                        <ChatMessage
+                          key={item.key}
+                          index={item.index}
+                          grouped={item.grouped}
+                          message={{
+                            id: String(item.msg.id),
+                            sender:
+                              item.msg.sender_name ||
+                              (item.msg.mine ? displayName : "Member"),
+                            content: item.msg.content,
+                            timestamp: new Date(item.msg.created_at * 1000),
+                            isOwn: item.msg.mine ?? false,
+                            avatar: item.msg.mine ? "ME" : "U",
+                          }}
+                          messageId={item.msg.id}
+                          onEdit={handleEditMessage}
+                          onDelete={handleDeleteMessage}
+                          isUpdating={
+                            updateMessageMutation.isPending &&
+                            updateMessageMutation.variables?.id === item.msg.id
+                          }
+                          isDeleting={
+                            deleteMessageMutation.isPending &&
+                            deleteMessageMutation.variables === item.msg.id
+                          }
+                        />
+                      ),
+                    )}
+                    <div ref={messagesEndRef} className="h-1" />
                   </div>
+
+                  {/* Jump to latest */}
+                  <AnimatePresence>
+                    {showScrollButton && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 8, scale: 0.9 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: 8, scale: 0.9 }}
+                        transition={{ duration: 0.15 }}
+                        className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10"
+                      >
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => scrollToBottom("smooth")}
+                          className="rounded-full shadow-lg border border-border/60 h-9 px-4 gap-1.5"
+                        >
+                          <ChevronDown className="h-4 w-4" />
+                          Latest
+                        </Button>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
 
                   <div className="p-3 sm:p-4 border-t border-border/50 shrink-0">
                     <div className="flex gap-2 items-end">
@@ -438,15 +600,19 @@ export default function RoomView() {
                       </div>
                       <Button
                         onClick={handleSendMessage}
-                        disabled={composerEmpty}
+                        disabled={composerEmpty || sendMessageMutation.isPending}
                         size="icon"
-                        className="shrink-0 h-[44px] w-[44px]"
+                        className="shrink-0 h-[44px] w-[44px] transition-transform active:scale-95 disabled:opacity-50"
+                        aria-label="Send message"
                       >
                         <Send className="h-5 w-5" />
                       </Button>
                     </div>
-                    <p className="text-xs text-muted-foreground mt-1.5">
-                      Paste from any site to keep formatting
+                    <p className="text-[11px] text-muted-foreground mt-1.5 px-0.5">
+                      <kbd className="font-sans">Enter</kbd> to send ·{" "}
+                      <kbd className="font-sans">Shift</kbd>+
+                      <kbd className="font-sans">Enter</kbd> for a new line ·
+                      formatting is preserved on paste
                     </p>
                   </div>
                 </div>
