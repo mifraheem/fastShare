@@ -1,5 +1,6 @@
 import { handle, ok, requireClient, now, HttpError } from "@/server/api";
 import { sql } from "@/server/db";
+import { notifyRoom } from "@/server/realtime";
 import { deleteRoomFolder } from "@/server/storage";
 
 type Params = { code: string };
@@ -8,7 +9,7 @@ type Params = { code: string };
 export const GET = handle<Params>(async (req, { code }) => {
   const client = await requireClient(req);
   const [room] = await sql`
-    select id, code, name, owner_client_id, expires_at, created_at, updated_at
+    select id, code, name, owner_client_id, expires_at, created_at, updated_at, realtime_key
     from rooms where code = ${code.trim()}`;
   if (!room) throw new HttpError(404, "NOT_FOUND", "room not found");
 
@@ -40,13 +41,14 @@ export const GET = handle<Params>(async (req, { code }) => {
     updated_at: room.updated_at,
     members,
     member_count: members.length,
+    realtime_key: room.realtime_key, // members only: the 403 above runs first
   });
 });
 
 /** DELETE /api/rooms/:code — owner only. Removes messages, members, files and the stored files. */
 export const DELETE = handle<Params>(async (req, { code }) => {
   const client = await requireClient(req);
-  const [room] = await sql`select id, owner_client_id from rooms where code = ${code.trim()}`;
+  const [room] = await sql`select id, owner_client_id, realtime_key from rooms where code = ${code.trim()}`;
   if (!room) throw new HttpError(404, "NOT_FOUND", "room not found");
   if (room.owner_client_id !== client.id) {
     throw new HttpError(403, "FORBIDDEN", "only owner can delete room");
@@ -54,6 +56,7 @@ export const DELETE = handle<Params>(async (req, { code }) => {
 
   const filesDeleted = await deleteRoomFolder(code.trim());
   await sql`delete from rooms where id = ${room.id}`;
+  await notifyRoom(room.realtime_key, { event: "room", payload: { op: "delete" } });
 
   return ok(200, { status: "deleted", code: code.trim(), files_deleted: filesDeleted });
 });

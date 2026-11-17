@@ -2,6 +2,7 @@ import {
   handle, ok, readJson, requireClient, now, HttpError, MIN_EXTEND_MINUTES, MAX_EXTEND_MINUTES,
 } from "@/server/api";
 import { sql } from "@/server/db";
+import { notifyRoom } from "@/server/realtime";
 
 /** POST /api/rooms/:code/extend — owner only. Body { minutes } or ?minutes= */
 export const POST = handle<{ code: string }>(async (req, { code }) => {
@@ -16,7 +17,7 @@ export const POST = handle<{ code: string }>(async (req, { code }) => {
   }
 
   const [room] = await sql`
-    select id, code, name, owner_client_id, expires_at from rooms where code = ${code.trim()}`;
+    select id, code, name, owner_client_id, expires_at, realtime_key from rooms where code = ${code.trim()}`;
   if (!room) throw new HttpError(404, "NOT_FOUND", "room not found");
   if (room.owner_client_id !== client.id) {
     throw new HttpError(403, "FORBIDDEN", "only owner can extend room");
@@ -30,6 +31,7 @@ export const POST = handle<{ code: string }>(async (req, { code }) => {
     update rooms set expires_at = expires_at + ${minutes * 60}, updated_at = ${n}
     where id = ${room.id}
     returning expires_at`;
+  await notifyRoom(room.realtime_key, { event: "room", payload: { op: "extend" } });
 
   return ok(200, {
     status: "extended",

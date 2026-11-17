@@ -2,28 +2,12 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { motion, AnimatePresence } from "framer-motion";
 import { format, isToday, isYesterday } from "date-fns";
-import {
-  ArrowLeft,
-  Copy,
-  Check,
-  Send,
-  Timer,
-  MessageSquare,
-  FolderOpen,
-  Clock,
-  Trash2,
-  Info,
-  ChevronDown,
-  MessagesSquare,
-} from "lucide-react";
+import { ArrowLeft, Copy, Check, ArrowUp, ChevronDown, ArrowDown, Trash2, Plus } from "lucide-react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cn } from "@/lib/utils";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -33,111 +17,140 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { DisplayNameBadge } from "@/components/DisplayNameBadge";
 import { ChatMessage } from "@/components/ChatMessage";
-import { FileList } from "@/components/FileList";
-import { FileUpload } from "@/components/FileUpload";
+import { FilesPanel } from "@/components/FilesPanel";
+import { Avatar } from "@/components/Avatar";
 
 import { useDisplayName } from "@/contexts/DisplayNameContext";
-import { useRoomDetail, useDeleteRoom, useExtendRoom } from "@/hooks/useRooms";
-import {
-  useRoomMessages,
-  useSendMessage,
-  useUpdateMessage,
-  useDeleteMessage,
-} from "@/hooks/useMessages";
-import {
-  useRoomFiles,
-  useUploadFile,
-  useDeleteFile,
-  useDownloadFile,
-} from "@/hooks/useFiles";
-
-import { toast } from "sonner";
+import { useRoomDetail, useDeleteRoom, useExtendRoom, useJoinRoom } from "@/hooks/useRooms";
+import { useRoomMessages, useSendMessage, useUpdateMessage, useDeleteMessage } from "@/hooks/useMessages";
+import { useRoomFiles, useUploadFile, useDeleteFile, useDownloadFile } from "@/hooks/useFiles";
+import { useRoomRealtime } from "@/hooks/useRoomRealtime";
+import { useQueryClient } from "@tanstack/react-query";
+import { TextShimmer } from "@/components/wensity/text-shimmer";
 import { sanitizeMessageHtml } from "@/lib/sanitize";
+import { formatCountdown } from "@/lib/format";
+import { cn } from "@/lib/utils";
+
+type Panel = "chat" | "files" | "people";
+
+const EXTEND_OPTIONS = [
+  { label: "Add 15 minutes", minutes: 15 },
+  { label: "Add 30 minutes", minutes: 30 },
+  { label: "Add 1 hour", minutes: 60 },
+] as const;
+
+const dayLabel = (date: Date) =>
+  isToday(date) ? "Today" : isYesterday(date) ? "Yesterday" : format(date, "EEEE, MMMM d");
 
 export default function RoomView() {
   const params = useParams<{ roomName: string; roomCode: string }>();
-  const roomName = params?.roomName ? decodeURIComponent(params.roomName) : undefined;
-  const roomCode = params?.roomCode;
+  const roomCode = params?.roomCode ?? "";
+  const urlName = params?.roomName ? decodeURIComponent(params.roomName).replace(/-/g, " ") : "";
   const router = useRouter();
 
-  const [newMessage, setNewMessage] = useState("");
+  const [panel, setPanel] = useState<Panel>("chat");
   const [composerEmpty, setComposerEmpty] = useState(true);
   const [copied, setCopied] = useState(false);
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [extendingMinutes, setExtendingMinutes] = useState<number | null>(null);
+  const [showScrollButton, setShowScrollButton] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const atBottomRef = useRef(true);
   const prevMsgCountRef = useRef(0);
-  const [showScrollButton, setShowScrollButton] = useState(false);
-
-  /* =========================
-     Room detail (for timer)
-  ========================= */
 
   const { displayName } = useDisplayName();
-  const { data: roomDetail } = useRoomDetail(roomCode ?? undefined);
+  const { data: room, error: roomError, isLoading: roomLoading, refetch: refetchRoom } = useRoomDetail(roomCode || undefined);
   const deleteRoomMutation = useDeleteRoom();
   const extendRoomMutation = useExtendRoom();
+  const joinRoomMutation = useJoinRoom();
 
-  /* =========================
-     Messages API
-  ========================= */
+  const closed = !!room && (room.expired || timeLeft === 0);
+  // Only load messages/files once we know we're a member of an open room
+  const activeCode = room && !closed ? roomCode : "";
+  const myMemberId = room?.members.find((m) => m.me)?.id;
+  const me = useMemo(() => (myMemberId != null ? { id: myMemberId, name: displayName } : null), [myMemberId, displayName]);
 
-  const { data: messagesData, isLoading: messagesLoading } =
-    useRoomMessages(roomCode!, { limit: 100 });
+  const queryClient = useQueryClient();
+  const refreshFiles = useCallback(
+    () => queryClient.invalidateQueries({ queryKey: ["rooms", roomCode, "files"] }),
+    [queryClient, roomCode]
+  );
 
-  const sendMessageMutation = useSendMessage(roomCode!);
-  const updateMessageMutation = useUpdateMessage(roomCode!);
-  const deleteMessageMutation = useDeleteMessage(roomCode!);
-  const messages = messagesData?.messages ?? [];
+  // Realtime: instant signals, presence and typing; polling only as a fallback while disconnected.
+  // (Handlers run after render, so they can use fetchNewer/resync declared just below.)
+  const realtime = useRoomRealtime(closed ? undefined : room?.realtime_key, me, {
+    onMessages: (s) => (s.op === "insert" ? fetchNewer() : resync()),
+    onFiles: refreshFiles,
+    onRoom: (s) => {
+      if (s.op === "delete") {
+        toast("The owner deleted this room");
+        router.push("/");
+      } else refetchRoom();
+    },
+    onConnected: () => {
+      fetchNewer();
+      refreshFiles();
+      refetchRoom();
+    },
+  });
+  const live = realtime.connected;
+  const messagesQuery = useRoomMessages(activeCode, { live });
+  const { fetchNewer, resync } = messagesQuery;
 
-  /* =========================
-     Files API
-  ========================= */
+  const typers = realtime.typingNames;
+  const typingLabel =
+    typers.length === 0
+      ? ""
+      : typers.length === 1
+        ? `${typers[0]} is typing…`
+        : typers.length === 2
+          ? `${typers[0]} and ${typers[1]} are typing…`
+          : "Several people are typing…";
 
-  const {
-    data: filesData,
-    isLoading: filesLoading,
-  } = useRoomFiles(roomCode!);
+  const { data: messagesData, isLoading: messagesLoading } = messagesQuery;
+  const sendMessageMutation = useSendMessage(roomCode, me);
+  const updateMessageMutation = useUpdateMessage(roomCode);
+  const deleteMessageMutation = useDeleteMessage(roomCode);
+  const messages = useMemo(() => messagesData?.messages ?? [], [messagesData]);
 
-  const uploadFileMutation = useUploadFile(roomCode!);
-  const deleteFileMutation = useDeleteFile(roomCode!);
+  const { data: filesData, isLoading: filesLoading } = useRoomFiles(activeCode, { live });
+  const uploadFileMutation = useUploadFile(roomCode);
+  const deleteFileMutation = useDeleteFile(roomCode);
   const downloadFile = useDownloadFile();
-
   const files = filesData?.files ?? [];
 
-  /* =========================
-     Countdown timer (actual remaining time from server)
-  ========================= */
+  /* ---------- Countdown ---------- */
 
   useEffect(() => {
-    if (roomDetail?.expires_at == null) return;
-    const update = () => {
-      const now = Math.floor(Date.now() / 1000);
-      const remaining = Math.max(0, roomDetail.expires_at - now);
-      setTimeLeft(remaining);
-    };
+    if (room?.expires_at == null) return;
+    const update = () => setTimeLeft(Math.max(0, room.expires_at - Math.floor(Date.now() / 1000)));
     update();
     const timer = setInterval(update, 1000);
     return () => clearInterval(timer);
-  }, [roomDetail?.expires_at]);
+  }, [room?.expires_at]);
 
-  /* =========================
-     Smart auto-scroll
-     - jump to bottom on first load
-     - follow new messages only when already at the bottom
-     - otherwise show a "jump to latest" button
-  ========================= */
+  const lifetime = room ? Math.max(1, room.expires_at - room.created_at) : 1;
+  const remainingRatio = timeLeft == null ? 1 : Math.min(1, timeLeft / lifetime);
+  const lowTime = timeLeft != null && timeLeft > 0 && timeLeft <= 300;
+
+  /* ---------- Auto-scroll: follow new messages only when already at the bottom ---------- */
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
-    messagesEndRef.current?.scrollIntoView({ behavior });
+    messagesEndRef.current?.scrollIntoView({ behavior, block: "end" });
     atBottomRef.current = true;
     setShowScrollButton(false);
   }, []);
@@ -145,10 +158,9 @@ export default function RoomView() {
   const handleMessagesScroll = useCallback(() => {
     const el = scrollContainerRef.current;
     if (!el) return;
-    const distanceFromBottom =
-      el.scrollHeight - el.scrollTop - el.clientHeight;
-    atBottomRef.current = distanceFromBottom < 80;
-    setShowScrollButton(distanceFromBottom > 240);
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    atBottomRef.current = distance < 80;
+    setShowScrollButton(distance > 240);
   }, []);
 
   useEffect(() => {
@@ -156,164 +168,80 @@ export default function RoomView() {
     const prev = prevMsgCountRef.current;
     prevMsgCountRef.current = count;
     if (count === 0) return;
-    // First batch: jump instantly. New messages while pinned to bottom: glide.
-    if (prev === 0) {
-      scrollToBottom("auto");
-    } else if (count > prev && atBottomRef.current) {
-      scrollToBottom("smooth");
-    }
+    if (prev === 0) scrollToBottom("auto");
+    else if (count > prev && atBottomRef.current) scrollToBottom("smooth");
   }, [messages.length, scrollToBottom]);
 
-  /* =========================
-     Helpers
-  ========================= */
+  // Returning to the chat tab on mobile: land on the latest message
+  useEffect(() => {
+    if (panel === "chat") requestAnimationFrame(() => scrollToBottom("auto"));
+  }, [panel, scrollToBottom]);
 
-  const formatTime = (seconds: number) => {
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = seconds % 60;
-    return `${h.toString().padStart(2, "0")}:${m
-      .toString()
-      .padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
-  };
+  /* ---------- Actions ---------- */
 
   const handleCopyCode = () => {
-    navigator.clipboard.writeText(roomCode || "");
+    navigator.clipboard.writeText(roomCode);
     setCopied(true);
-    toast.success("Room code copied! 📋");
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  /* =========================
-     Send message
-  ========================= */
-
-  const getComposerContent = (): string => {
-    const el = composerRef.current;
-    if (!el) return "";
-    const raw = el.innerHTML.trim();
-    if (!raw || raw === "<br>" || raw === "<br/>") return "";
-    return sanitizeMessageHtml(raw);
+    toast.success("Room code copied");
+    setTimeout(() => setCopied(false), 1500);
   };
 
   const handleComposerInput = () => {
-    const el = composerRef.current;
-    const text = el?.innerText?.trim() ?? "";
-    setComposerEmpty(!text.length);
+    const empty = !(composerRef.current?.innerText?.trim().length ?? 0);
+    setComposerEmpty(empty);
+    if (empty) realtime.notifyStoppedTyping();
+    else realtime.notifyTyping();
   };
 
   const handleComposerPaste = (e: React.ClipboardEvent) => {
     const html = e.clipboardData.getData("text/html");
-    const text = e.clipboardData.getData("text/plain");
     if (html) {
       e.preventDefault();
-      const clean = sanitizeMessageHtml(html);
-      document.execCommand("insertHTML", false, clean);
+      document.execCommand("insertHTML", false, sanitizeMessageHtml(html));
       handleComposerInput();
     }
-    // else let default paste (plain text) happen
   };
 
-  const handleSendMessage = async () => {
-    const content = getComposerContent();
-    if (!content) return;
+  const handleSendMessage = () => {
+    const raw = composerRef.current?.innerHTML.trim() ?? "";
+    if (!raw || raw === "<br>" || composerEmpty) return;
+    const content = sanitizeMessageHtml(raw);
+    // Optimistic: clear the composer and show the message right away
+    if (composerRef.current) composerRef.current.innerHTML = "";
+    setComposerEmpty(true);
+    realtime.notifyStoppedTyping();
+    requestAnimationFrame(() => scrollToBottom("smooth"));
+    sendMessageMutation.mutate(content, {
+      onError: (err) => {
+        toast.error(`Message not sent: ${err.message}`);
+        // Give the text back so nothing is lost
+        if (composerRef.current && !composerRef.current.innerText.trim()) {
+          composerRef.current.innerHTML = content;
+          setComposerEmpty(false);
+        }
+      },
+    });
+  };
 
+  const run = (fn: () => Promise<unknown>, success: string) => async () => {
     try {
-      await sendMessageMutation.mutateAsync(content);
-      if (composerRef.current) {
-        composerRef.current.innerHTML = "";
-        setComposerEmpty(true);
-      }
-      setNewMessage("");
+      await fn();
+      toast.success(success);
     } catch (err) {
       toast.error((err as Error).message);
     }
   };
 
-  const handleEditMessage = async (id: number, content: string) => {
-    try {
-      await updateMessageMutation.mutateAsync({ id, content });
-      toast.success("Message updated");
-    } catch (err) {
-      toast.error((err as Error).message);
-    }
-  };
-
-  const handleDeleteMessage = async (id: number) => {
-    try {
-      await deleteMessageMutation.mutateAsync(id);
-      toast.success("Message deleted");
-    } catch (err) {
-      toast.error((err as Error).message);
-    }
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSendMessage();
-    }
-  };
-
-  /* =========================
-     File handlers
-  ========================= */
-
-  const handleFileUpload = async (file: File) => {
+  const handleUpload = async (file: File) => {
     try {
       await uploadFileMutation.mutateAsync(file);
-      toast.success(`Uploaded "${file.name}"`);
+      toast.success(`Uploaded ${file.name}`);
     } catch (err) {
-      toast.error((err as Error).message);
-    }
-  };
-
-  const handleFileDownload = async (id: number, filename: string) => {
-    try {
-      const file = files.find(f => f.id === id);
-      await downloadFile(id, filename, file?.url);
-    } catch {
-      toast.error("Failed to download file");
-    }
-  };
-
-  const handleFilePreview = async (id: number, filename: string) => {
-    const file = files.find(f => f.id === id);
-    if (file?.url) {
-      window.open(file.url, '_blank');
-    } else {
-      toast.error("Preview not available for this file");
-    }
-  };
-
-  const handleFileDelete = async (id: number) => {
-    try {
-      await deleteFileMutation.mutateAsync(id);
-      toast.success("File deleted");
-    } catch (err) {
-      toast.error((err as Error).message);
-    }
-  };
-
-  /* =========================
-     Owner actions: extend & delete room
-  ========================= */
-
-  const handleExtendRoom = async (minutes: number) => {
-    if (!roomCode) return;
-    setExtendingMinutes(minutes);
-    try {
-      await extendRoomMutation.mutateAsync({ code: roomCode, minutes });
-      toast.success(`Room extended by ${minutes} minutes ⏱️`);
-    } catch (err) {
-      toast.error((err as Error).message);
-    } finally {
-      setExtendingMinutes(null);
+      toast.error((err as Error).message || "Upload failed. Try again.");
     }
   };
 
   const handleDeleteRoom = async () => {
-    if (!roomCode) return;
     try {
       await deleteRoomMutation.mutateAsync(roomCode);
       setDeleteDialogOpen(false);
@@ -324,435 +252,414 @@ export default function RoomView() {
     }
   };
 
-  const EXTEND_OPTIONS = [
-    { label: "15 min", minutes: 15 },
-    { label: "30 min", minutes: 30 },
-    { label: "1 hour", minutes: 60 },
-  ] as const;
-
-  /* =========================
-     Group messages + day separators
-  ========================= */
-
-  const dayLabel = (date: Date) => {
-    if (isToday(date)) return "Today";
-    if (isYesterday(date)) return "Yesterday";
-    return format(date, "EEEE, MMMM d");
+  const handleJoin = async () => {
+    try {
+      await joinRoomMutation.mutateAsync(roomCode);
+      await refetchRoom();
+    } catch (err) {
+      toast.error(/expired/i.test((err as Error).message) ? "That room has closed." : (err as Error).message);
+    }
   };
+
+  /* ---------- Messages with day separators + sender grouping ---------- */
 
   type ChatItem =
     | { kind: "separator"; key: string; label: string }
-    | {
-        kind: "message";
-        key: string;
-        index: number;
-        msg: (typeof messages)[number];
-        grouped: boolean;
-      };
+    | { kind: "message"; key: string; msg: (typeof messages)[number]; grouped: boolean };
 
   const chatItems = useMemo<ChatItem[]>(() => {
     const items: ChatItem[] = [];
     let prev: (typeof messages)[number] | null = null;
-    messages.forEach((msg, index) => {
+    for (const msg of messages) {
       const date = new Date(msg.created_at * 1000);
-      const newDay =
-        !prev ||
-        new Date(prev.created_at * 1000).toDateString() !== date.toDateString();
-      if (newDay) {
-        items.push({
-          kind: "separator",
-          key: `sep-${msg.id}`,
-          label: dayLabel(date),
-        });
-      }
-      const grouped =
-        !newDay &&
-        !!prev &&
-        prev.sender_client_id === msg.sender_client_id &&
-        msg.created_at - prev.created_at < 300;
-      items.push({ kind: "message", key: String(msg.id), index, msg, grouped });
+      const newDay = !prev || new Date(prev.created_at * 1000).toDateString() !== date.toDateString();
+      if (newDay) items.push({ kind: "separator", key: `sep-${msg.id}`, label: dayLabel(date) });
+      const grouped = !newDay && !!prev && prev.sender_client_id === msg.sender_client_id && msg.created_at - prev.created_at < 300;
+      items.push({ kind: "message", key: String(msg.id), msg, grouped });
       prev = msg;
-    });
+    }
     return items;
   }, [messages]);
 
-  /* =========================
-     Render
-  ========================= */
+  /* ---------- Not a member / missing room ---------- */
+
+  if (roomError && !room) {
+    const notMember = /not a room member/i.test(roomError.message);
+    return (
+      <div className="flex min-h-dvh flex-col">
+        <header className="flex h-14 items-center justify-between border-b px-2 sm:px-4">
+          <Button variant="ghost" size="sm" onClick={() => router.push("/")}>
+            <ArrowLeft />
+            All rooms
+          </Button>
+          <ThemeToggle />
+        </header>
+        <main className="flex flex-1 items-center justify-center p-6">
+          <div className="w-full max-w-sm text-center">
+            {notMember ? (
+              <>
+                <h1 className="text-xl font-semibold tracking-tight">Join {urlName || "this room"}?</h1>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  You&apos;ll appear as <span className="font-medium text-foreground">{displayName}</span>. Everyone in the room
+                  can see your messages and files.
+                </p>
+                <p className="mt-4 font-mono text-lg tracking-[0.2em]">{roomCode}</p>
+                <Button className="mt-6 h-11 w-full" onClick={handleJoin} disabled={joinRoomMutation.isPending}>
+                  {joinRoomMutation.isPending ? "Joining…" : "Join room"}
+                </Button>
+              </>
+            ) : (
+              <>
+                <h1 className="text-xl font-semibold tracking-tight">This room isn&apos;t available</h1>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  It may have closed or been deleted by its owner. Ask for a new code to join another room.
+                </p>
+                <Button variant="outline" className="mt-6 h-11 w-full" onClick={() => router.push("/")}>
+                  Back to your rooms
+                </Button>
+              </>
+            )}
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  const roomName = room?.name ?? urlName;
+  const isOwner = !!room?.owner;
+
+  const timer = (
+    <span className={cn("font-mono text-sm tabular-nums", lowTime && "text-warning", closed && "text-destructive")}>
+      {closed ? "Closed" : timeLeft != null ? formatCountdown(timeLeft) : "--:--"}
+      {!closed && <span className="ml-1 hidden font-sans text-muted-foreground sm:inline">left</span>}
+    </span>
+  );
 
   return (
-    <div className="h-screen flex flex-col bg-background gradient-bg overflow-hidden">
+    <div className="flex h-dvh flex-col overflow-hidden">
       {/* Header */}
-      <motion.header
-        initial={{ y: -20, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        className="sticky top-0 z-40 glass border-b border-border/50"
-      >
-        <div className="container mx-auto px-3 sm:px-4 h-14 sm:h-16 flex items-center justify-between gap-2 min-w-0">
-          <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-9 w-9 shrink-0"
-              onClick={() => router.push("/")}
-              aria-label="Back to home"
-            >
-              <ArrowLeft className="h-5 w-5" />
-            </Button>
-            <img
-              src="/logo.png"
-              alt="FastShare"
-              className="h-6 w-6 sm:h-8 sm:w-8 rounded-lg object-contain shrink-0"
-            />
-            <div className="min-w-0 flex-1">
-              <h1 className="font-display font-bold text-sm sm:text-base truncate" title={roomName?.replace(/-/g, " ")}>
-                {roomName?.replace(/-/g, " ")}
+      <header className="shrink-0 border-b bg-background">
+        <div className="flex h-14 items-center gap-1 px-2 sm:gap-2 sm:px-4">
+          <Button variant="ghost" size="icon" className="size-9 shrink-0" onClick={() => router.push("/")} aria-label="All rooms">
+            <ArrowLeft />
+          </Button>
+
+          <div className="min-w-0 flex-1">
+            {roomLoading && !room ? (
+              <Skeleton className="h-4 w-36" />
+            ) : (
+              <h1 className="truncate text-[15px] font-semibold leading-tight" title={roomName}>
+                {roomName}
               </h1>
-              <div className="flex items-center gap-1.5">
-                <code className="text-xs font-mono text-muted-foreground truncate max-w-[80px] sm:max-w-none">
-                  {roomCode}
-                </code>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 shrink-0"
-                  onClick={handleCopyCode}
-                >
-                  {copied ? (
-                    <Check className="h-3.5 w-3.5 text-success" />
-                  ) : (
-                    <Copy className="h-3.5 w-3.5" />
+            )}
+            <button
+              onClick={handleCopyCode}
+              className="inline-flex items-center gap-1 rounded font-mono text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              aria-label={`Room code ${roomCode}. Copy`}
+            >
+              {roomCode}
+              {copied ? <Check className="size-3 text-success" /> : <Copy className="size-3" />}
+            </button>
+          </div>
+
+          {isOwner && !closed ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" className="h-9 gap-1 px-2.5" aria-label="Room time and options">
+                  {timer}
+                  <ChevronDown className="text-muted-foreground" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-52">
+                <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Keep the room open</DropdownMenuLabel>
+                {EXTEND_OPTIONS.map(({ label, minutes }) => (
+                  <DropdownMenuItem
+                    key={minutes}
+                    disabled={extendRoomMutation.isPending}
+                    onClick={run(() => extendRoomMutation.mutateAsync({ code: roomCode, minutes }), `Added ${minutes === 60 ? "1 hour" : `${minutes} minutes`}`)}
+                  >
+                    <Plus className="mr-2 size-4" />
+                    {label}
+                  </DropdownMenuItem>
+                ))}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setDeleteDialogOpen(true)}>
+                  <Trash2 className="mr-2 size-4" />
+                  Delete room…
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : (
+            <span className="px-2.5" aria-label="Time left">
+              {timer}
+            </span>
+          )}
+
+          <div className="hidden sm:block">
+            <DisplayNameBadge />
+          </div>
+          <ThemeToggle />
+        </div>
+
+        {/* Time remaining: drains from full to empty over the room's lifetime */}
+        <div className="h-0.5 bg-border" role="progressbar" aria-label="Time left in this room" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(remainingRatio * 100)}>
+          <div
+            className={cn("h-full transition-[width] duration-1000 ease-linear", closed ? "bg-destructive" : lowTime ? "bg-warning" : "bg-foreground")}
+            style={{ width: `${remainingRatio * 100}%` }}
+          />
+        </div>
+
+        {/* Mobile panels */}
+        <nav className="grid grid-cols-3 lg:hidden" aria-label="Room sections">
+          {(
+            [
+              ["chat", "Chat", null],
+              ["files", "Files", files.length],
+              ["people", "People", room?.member_count ?? 0],
+            ] as const
+          ).map(([key, label, count]) => (
+            <button
+              key={key}
+              onClick={() => setPanel(key)}
+              aria-current={panel === key ? "page" : undefined}
+              className={cn(
+                "relative h-11 text-sm font-medium text-muted-foreground transition-colors",
+                panel === key && "text-foreground after:absolute after:inset-x-6 after:bottom-0 after:h-0.5 after:bg-foreground"
+              )}
+            >
+              {label}
+              {count ? <span className="ml-1 tabular-nums text-muted-foreground">{count}</span> : null}
+            </button>
+          ))}
+        </nav>
+      </header>
+
+      <div className="flex min-h-0 flex-1">
+        {/* Chat */}
+        <section aria-label="Chat" className={cn("relative min-w-0 flex-1 flex-col", panel === "chat" ? "flex" : "hidden lg:flex")}>
+          {closed && (
+            <div className="border-b bg-card px-4 py-3 text-sm" role="status">
+              <span className="font-medium">This room has closed.</span>{" "}
+              <span className="text-muted-foreground">Its messages and files have been removed.</span>
+            </div>
+          )}
+
+          <div ref={scrollContainerRef} onScroll={handleMessagesScroll} className="min-h-0 flex-1 overflow-y-auto">
+            <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col px-3 py-5 sm:px-6">
+              {messagesLoading && messages.length === 0 ? (
+                <div className="space-y-5">
+                  {[0, 1, 2].map((i) => (
+                    <div key={i} className={cn("flex gap-2.5", i === 1 && "flex-row-reverse")}>
+                      {i !== 1 && <Skeleton className="size-8 rounded-full" />}
+                      <Skeleton className="h-10 w-56 rounded-2xl" />
+                    </div>
+                  ))}
+                </div>
+              ) : messages.length === 0 && !closed && room ? (
+                <div className="m-auto flex max-w-sm flex-col items-center py-10 text-center">
+                  <p className="font-medium">No messages yet</p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Invite people with this code. Everything here is deleted when the room closes.
+                  </p>
+                  <button
+                    onClick={handleCopyCode}
+                    className="mt-5 rounded-xl border bg-card px-5 py-3 font-mono text-2xl tracking-[0.25em] transition-colors hover:border-foreground/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    aria-label={`Copy room code ${roomCode}`}
+                  >
+                    {roomCode}
+                  </button>
+                  <span className="mt-2 text-xs text-muted-foreground">{copied ? "Copied" : "Click to copy"}</span>
+                </div>
+              ) : (
+                <div className="mt-auto">
+                  {chatItems.map((item) =>
+                    item.kind === "separator" ? (
+                      <div key={item.key} className="my-5 flex items-center gap-3 text-xs text-muted-foreground first:mt-0">
+                        <span className="h-px flex-1 bg-border" />
+                        {item.label}
+                        <span className="h-px flex-1 bg-border" />
+                      </div>
+                    ) : (
+                      <ChatMessage
+                        key={item.key}
+                        grouped={item.grouped}
+                        message={{
+                          id: String(item.msg.id),
+                          sender: item.msg.sender_name || (item.msg.mine ? displayName : "Member"),
+                          content: item.msg.content,
+                          timestamp: new Date(item.msg.created_at * 1000),
+                          isOwn: item.msg.mine ?? false,
+                        }}
+                        messageId={item.msg.pending ? undefined : item.msg.id}
+                        pending={item.msg.pending}
+                        onEdit={(id, content) =>
+                          run(() => updateMessageMutation.mutateAsync({ id, content }), "Message updated")()
+                        }
+                        onDelete={(id) => run(() => deleteMessageMutation.mutateAsync(id), "Message deleted")()}
+                        isUpdating={updateMessageMutation.isPending && updateMessageMutation.variables?.id === item.msg.id}
+                        isDeleting={deleteMessageMutation.isPending && deleteMessageMutation.variables === item.msg.id}
+                      />
+                    )
                   )}
+                </div>
+              )}
+              <div ref={messagesEndRef} />
+            </div>
+          </div>
+
+          {showScrollButton && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => scrollToBottom("smooth")}
+              className="absolute bottom-24 left-1/2 h-8 -translate-x-1/2 rounded-full bg-card shadow-md"
+            >
+              <ArrowDown />
+              Latest
+            </Button>
+          )}
+
+          {/* Composer */}
+          <div className="shrink-0 px-3 pb-3 sm:px-6 sm:pb-5">
+            {/* Fixed-height slot so the layout never jumps when someone starts typing */}
+            <div className="mx-auto flex h-6 max-w-3xl items-center px-1" aria-live="polite">
+              {typingLabel && (
+                <TextShimmer
+                  text={typingLabel}
+                  duration={1.8}
+                  className="text-xs"
+                  baseColor="hsl(var(--muted-foreground))"
+                  shimmerColor="hsl(var(--foreground))"
+                />
+              )}
+            </div>
+            <div
+              className={cn(
+                "mx-auto flex max-w-3xl items-end gap-2 rounded-2xl border bg-card p-1.5 pl-4 shadow-[0_1px_2px_rgba(0,0,0,0.04)] focus-within:border-foreground/25",
+                closed && "pointer-events-none opacity-50"
+              )}
+            >
+              <div className="relative min-w-0 flex-1 py-1.5">
+                <div
+                  ref={composerRef}
+                  contentEditable={!closed}
+                  suppressContentEditableWarning
+                  role="textbox"
+                  aria-multiline="true"
+                  aria-label="Message"
+                  onInput={handleComposerInput}
+                  onPaste={handleComposerPaste}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSendMessage();
+                    }
+                  }}
+                  className="message-body max-h-[40vh] min-h-[24px] overflow-y-auto outline-none"
+                />
+                {composerEmpty && (
+                  <span className="pointer-events-none absolute inset-x-0 top-1.5 select-none truncate text-[15px] text-muted-foreground" aria-hidden>
+                    {closed ? "This room has closed" : `Message ${roomName}`}
+                  </span>
+                )}
+              </div>
+              <Button
+                onClick={handleSendMessage}
+                disabled={composerEmpty || sendMessageMutation.isPending || closed}
+                size="icon"
+                className="size-9 shrink-0 rounded-xl"
+                aria-label="Send message"
+              >
+                <ArrowUp />
+              </Button>
+            </div>
+            <div className="mx-auto mt-1.5 hidden max-w-3xl items-center justify-between px-1 text-xs text-muted-foreground sm:flex">
+              <span>Enter to send, Shift + Enter for a new line</span>
+              {room && !closed && (
+                <span className="inline-flex items-center gap-1.5" title={live ? "Updates arrive instantly" : "Reconnecting; checking for updates every few seconds"}>
+                  <span className={cn("size-1.5 rounded-full", live ? "bg-success" : "animate-pulse bg-warning")} />
+                  {live ? "Live" : "Connecting…"}
+                </span>
+              )}
+            </div>
+          </div>
+        </section>
+
+        {/* Files + people: side column on desktop, tabs on mobile */}
+        <aside
+          className={cn(
+            "min-h-0 w-full shrink-0 flex-col border-l-0 bg-card/50 lg:flex lg:w-[340px] lg:border-l xl:w-[380px]",
+            panel === "chat" ? "hidden" : "flex"
+          )}
+        >
+          <div className={cn("min-h-0 flex-1 flex-col", panel === "people" ? "hidden lg:flex" : "flex")}>
+            <FilesPanel
+              files={files}
+              loading={filesLoading && !!activeCode}
+              disabled={closed || !room}
+              canDelete={isOwner}
+              onUpload={handleUpload}
+              onDownload={(id, filename) => downloadFile(id, filename)}
+              onOpen={(id) => window.open(`/api/files/${id}/download`, "_blank", "noopener")}
+              onDelete={(id) => run(() => deleteFileMutation.mutateAsync(id), "File deleted")()}
+            />
+          </div>
+
+          <section
+            aria-label="People"
+            className={cn("shrink-0 px-4 py-4 lg:max-h-[45%] lg:overflow-y-auto lg:border-t", panel === "files" && "hidden lg:block")}
+          >
+            <h2 className="text-sm font-semibold max-lg:sr-only">
+              People <span className="font-normal tabular-nums text-muted-foreground">{room?.member_count ?? ""}</span>
+            </h2>
+            <ul className="space-y-0.5 lg:mt-2">
+              {room?.members.map((m) => (
+                <li key={m.id} className="flex items-center gap-2.5 py-1.5 text-sm">
+                  <span className="relative shrink-0">
+                    <Avatar name={m.name} className="size-7 text-[10px]" />
+                    {realtime.onlineIds.has(m.id) && (
+                      <span className="absolute -bottom-0.5 -right-0.5 size-2.5 rounded-full border-2 border-card bg-success" title="Online" />
+                    )}
+                  </span>
+                  <span className="min-w-0 truncate">
+                    {m.name}
+                    {m.me && <span className="text-muted-foreground"> (you)</span>}
+                  </span>
+                  {m.role === "owner" && <span className="ml-auto shrink-0 text-xs text-muted-foreground">Owner</span>}
+                </li>
+              ))}
+            </ul>
+
+            <div className="mt-4 rounded-lg border bg-background p-3">
+              <p className="text-xs text-muted-foreground">Invite people with this code</p>
+              <div className="mt-1 flex items-center justify-between gap-2">
+                <span className="font-mono text-lg tracking-[0.2em]">{roomCode}</span>
+                <Button variant="ghost" size="sm" className="h-8" onClick={handleCopyCode}>
+                  {copied ? <Check className="text-success" /> : <Copy />}
+                  {copied ? "Copied" : "Copy"}
                 </Button>
               </div>
             </div>
-          </div>
 
-          <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
-            <div className="hidden sm:block">
-              <DisplayNameBadge variant="compact" />
+            <div className="mt-4 sm:hidden">
+              <p className="px-0.5 text-xs text-muted-foreground">Your name in this room</p>
+              <DisplayNameBadge block className="-mx-2 mt-1" />
             </div>
-            <div className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-4 py-1.5 sm:py-2 rounded-full bg-secondary">
-              <Timer className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
-              <span className="font-mono font-medium text-xs sm:text-sm tabular-nums">
-                {timeLeft !== null ? formatTime(timeLeft) : "—:——:——"}
-              </span>
-            </div>
-            <ThemeToggle />
-          </div>
-        </div>
-      </motion.header>
+          </section>
+        </aside>
+      </div>
 
-      {/* Main - fills remaining height */}
-      <main className="container mx-auto px-3 sm:px-4 py-3 sm:py-4 flex-1 flex flex-col min-h-0">
-        <div className="grid lg:grid-cols-3 gap-4 sm:gap-6 flex-1 min-h-0">
-          {/* Chat + Files - full height */}
-          <div className="lg:col-span-2 flex flex-col min-h-0 min-w-0">
-            <Tabs defaultValue="chat" className="flex flex-col flex-1 min-h-0">
-              <TabsList className="glass-card p-1 mb-2 shrink-0 grid grid-cols-2 w-full sm:w-auto">
-                <TabsTrigger value="chat" className="min-h-[44px] text-sm sm:text-base">
-                  <MessageSquare className="h-4 w-4 mr-1.5 sm:mr-2 shrink-0" />
-                  Chat
-                </TabsTrigger>
-                <TabsTrigger value="files" className="min-h-[44px] text-sm sm:text-base">
-                  <FolderOpen className="h-4 w-4 mr-1.5 sm:mr-2 shrink-0" />
-                  Files
-                </TabsTrigger>
-              </TabsList>
-
-              {/* Chat - full height */}
-              <TabsContent value="chat" className="flex-1 flex flex-col min-h-0 mt-0 data-[state=inactive]:hidden">
-                <div className="glass-card flex-1 flex flex-col min-h-0 rounded-lg overflow-hidden">
-                  <div className="relative flex-1 flex flex-col min-h-0">
-                  <div
-                    ref={scrollContainerRef}
-                    onScroll={handleMessagesScroll}
-                    className="flex-1 min-h-0 overflow-y-auto px-2 sm:px-3 py-3 sm:py-4 scroll-smooth"
-                  >
-                    {/* Loading skeletons */}
-                    {messagesLoading && messages.length === 0 && (
-                      <div className="space-y-4">
-                        {[0, 1, 2, 3].map((i) => (
-                          <div
-                            key={i}
-                            className={cn(
-                              "flex gap-2.5 px-1",
-                              i % 2 === 1 && "flex-row-reverse",
-                            )}
-                          >
-                            <Skeleton className="h-9 w-9 rounded-full shrink-0" />
-                            <div
-                              className={cn(
-                                "flex flex-col gap-1.5",
-                                i % 2 === 1 && "items-end",
-                              )}
-                            >
-                              <Skeleton className="h-3 w-24 rounded" />
-                              <Skeleton className="h-9 w-44 sm:w-64 rounded-2xl" />
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Empty state */}
-                    {!messagesLoading && messages.length === 0 && (
-                      <div className="h-full flex flex-col items-center justify-center text-center px-6 py-12">
-                        <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center mb-4">
-                          <MessagesSquare className="h-7 w-7 text-primary" />
-                        </div>
-                        <p className="font-medium text-foreground">
-                          No messages yet
-                        </p>
-                        <p className="text-sm text-muted-foreground mt-1 max-w-xs">
-                          Say hello and start the conversation — everyone in this
-                          room will see it instantly.
-                        </p>
-                      </div>
-                    )}
-
-                    {/* Messages */}
-                    {chatItems.map((item) =>
-                      item.kind === "separator" ? (
-                        <div
-                          key={item.key}
-                          className="flex items-center gap-3 my-4 px-2 select-none"
-                        >
-                          <div className="h-px flex-1 bg-border/60" />
-                          <span className="text-[11px] font-medium text-muted-foreground bg-secondary/70 px-2.5 py-0.5 rounded-full">
-                            {item.label}
-                          </span>
-                          <div className="h-px flex-1 bg-border/60" />
-                        </div>
-                      ) : (
-                        <ChatMessage
-                          key={item.key}
-                          index={item.index}
-                          grouped={item.grouped}
-                          message={{
-                            id: String(item.msg.id),
-                            sender:
-                              item.msg.sender_name ||
-                              (item.msg.mine ? displayName : "Member"),
-                            content: item.msg.content,
-                            timestamp: new Date(item.msg.created_at * 1000),
-                            isOwn: item.msg.mine ?? false,
-                            avatar: item.msg.mine ? "ME" : "U",
-                          }}
-                          messageId={item.msg.id}
-                          onEdit={handleEditMessage}
-                          onDelete={handleDeleteMessage}
-                          isUpdating={
-                            updateMessageMutation.isPending &&
-                            updateMessageMutation.variables?.id === item.msg.id
-                          }
-                          isDeleting={
-                            deleteMessageMutation.isPending &&
-                            deleteMessageMutation.variables === item.msg.id
-                          }
-                        />
-                      ),
-                    )}
-                    <div ref={messagesEndRef} className="h-1" />
-                  </div>
-
-                  {/* Jump to latest */}
-                  <AnimatePresence>
-                    {showScrollButton && (
-                      <motion.div
-                        initial={{ opacity: 0, y: 8, scale: 0.9 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                        exit={{ opacity: 0, y: 8, scale: 0.9 }}
-                        transition={{ duration: 0.15 }}
-                        className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10"
-                      >
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => scrollToBottom("smooth")}
-                          className="rounded-full shadow-lg border border-border/60 h-9 px-4 gap-1.5"
-                        >
-                          <ChevronDown className="h-4 w-4" />
-                          Latest
-                        </Button>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-
-                  <div className="p-3 sm:p-4 border-t border-border/50 shrink-0">
-                    <div className="flex gap-2 items-end">
-                      <div className="relative flex-1 min-h-[44px] rounded-lg border border-border bg-secondary/50 focus-within:ring-2 focus-within:ring-primary focus-within:ring-offset-2 focus-within:ring-offset-background">
-                        <div
-                          ref={composerRef}
-                          contentEditable
-                          suppressContentEditableWarning
-                          onInput={handleComposerInput}
-                          onPaste={handleComposerPaste}
-                          onKeyDown={handleKeyDown}
-                          className="min-h-[42px] max-h-[200px] overflow-y-auto px-3 py-2.5 text-sm outline-none prose prose-sm dark:prose-invert max-w-none [&_ul]:list-disc [&_ol]:list-decimal [&_h1]:text-base [&_h2]:text-sm [&_h3]:text-sm"
-                          data-placeholder="Type a message…"
-                        />
-                        {composerEmpty && (
-                          <span
-                            className="pointer-events-none absolute left-3 top-2.5 text-sm text-muted-foreground select-none"
-                            aria-hidden
-                          >
-                            Type a message…
-                          </span>
-                        )}
-                      </div>
-                      <Button
-                        onClick={handleSendMessage}
-                        disabled={composerEmpty || sendMessageMutation.isPending}
-                        size="icon"
-                        className="shrink-0 h-[44px] w-[44px] transition-transform active:scale-95 disabled:opacity-50"
-                        aria-label="Send message"
-                      >
-                        <Send className="h-5 w-5" />
-                      </Button>
-                    </div>
-                    <p className="text-[11px] text-muted-foreground mt-1.5 px-0.5">
-                      <kbd className="font-sans">Enter</kbd> to send ·{" "}
-                      <kbd className="font-sans">Shift</kbd>+
-                      <kbd className="font-sans">Enter</kbd> for a new line ·
-                      formatting is preserved on paste
-                    </p>
-                  </div>
-                </div>
-              </TabsContent>
-
-              {/* Files */}
-              <TabsContent value="files" className="mt-0">
-                <div className="glass-card p-4 sm:p-6 space-y-4 sm:space-y-6 rounded-lg">
-                  <FileUpload onUpload={handleFileUpload} />
-
-                  {filesLoading ? (
-                    <p className="text-sm text-muted-foreground">
-                      Loading files…
-                    </p>
-                  ) : (
-                    <FileList
-                      files={files}
-                      onDownload={handleFileDownload}
-                      onDelete={handleFileDelete}
-                      onPreview={handleFilePreview}
-                    />
-                  )}
-                </div>
-              </TabsContent>
-            </Tabs>
-          </div>
-
-          {/* Sidebar - Room Info & Owner options */}
-          <div className="space-y-4 sm:space-y-6 min-h-0 overflow-y-auto lg:max-h-[calc(100vh-8rem)]">
-            <div className="glass-card p-4 sm:p-6 rounded-lg">
-              <h3 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4 flex items-center gap-2">
-                <Info className="h-5 w-5 text-primary shrink-0" />
-                Room Info
-              </h3>
-              <p className="text-sm text-muted-foreground mb-2">
-                You're here as
-              </p>
-              <DisplayNameBadge variant="compact" className="w-full justify-center mb-3 sm:mb-4" />
-              <code className="block p-2.5 sm:p-3 rounded-lg bg-secondary text-center text-xs sm:text-sm font-mono mb-3 sm:mb-4 break-all">
-                {roomCode}
-              </code>
-              {roomDetail?.members && roomDetail.members.length > 0 && (
-                <>
-                  <h4 className="text-sm font-semibold mb-2">
-                    Members ({roomDetail.member_count})
-                  </h4>
-                  <ul className="space-y-1.5">
-                    {roomDetail.members.map((m) => (
-                      <li
-                        key={m.id}
-                        className="text-sm flex items-center justify-between gap-2"
-                      >
-                        <span className="truncate min-w-0">
-                          {m.name || "Member"}
-                          {m.me && (
-                            <span className="ml-1 text-muted-foreground text-xs">
-                              (you)
-                            </span>
-                          )}
-                        </span>
-                        <span className="text-xs text-muted-foreground shrink-0">
-                          {m.role}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              )}
-            </div>
-
-            {/* Owner-only: Extend & Delete */}
-            {roomDetail?.owner && (
-              <div className="glass-card p-4 sm:p-6 space-y-4 rounded-lg">
-                <h3 className="text-base sm:text-lg font-semibold flex items-center gap-2">
-                  <Clock className="h-4 w-4 sm:h-5 sm:w-5 shrink-0" />
-                  Owner options
-                </h3>
-
-                <div>
-                  <p className="text-sm text-muted-foreground mb-2">
-                    Add time to this room
-                  </p>
-                  <div className="flex flex-col sm:flex-row flex-wrap gap-2">
-                    {EXTEND_OPTIONS.map(({ label, minutes }) => (
-                      <Button
-                        key={minutes}
-                        variant="outline"
-                        size="sm"
-                        className="min-h-[44px] flex-1 sm:flex-initial"
-                        disabled={extendRoomMutation.isPending || roomDetail?.expired}
-                        onClick={() => handleExtendRoom(minutes)}
-                      >
-                        {extendingMinutes === minutes ? "Adding…" : `+ ${label}`}
-                      </Button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="pt-3 border-t border-border/50">
-                  <p className="text-sm text-muted-foreground mb-2">
-                    Permanently remove this room
-                  </p>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full sm:w-auto text-destructive border-destructive/50 hover:bg-destructive/10 hover:text-destructive min-h-[44px]"
-                    disabled={deleteRoomMutation.isPending}
-                    onClick={() => setDeleteDialogOpen(true)}
-                  >
-                    <Trash2 className="h-4 w-4 mr-2 shrink-0" />
-                    Delete room
-                  </Button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      </main>
-
-      {/* Delete room confirmation */}
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete this room?</AlertDialogTitle>
+            <AlertDialogTitle>Delete {roomName}?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete the room. All messages and files will
-              be removed, and everyone will lose access. This cannot be undone.
+              All messages and files are removed and everyone loses access. This can&apos;t be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <Button
-              variant="destructive"
-              disabled={deleteRoomMutation.isPending}
-              onClick={handleDeleteRoom}
-            >
+            <Button variant="destructive" disabled={deleteRoomMutation.isPending} onClick={handleDeleteRoom}>
               {deleteRoomMutation.isPending ? "Deleting…" : "Delete room"}
             </Button>
           </AlertDialogFooter>

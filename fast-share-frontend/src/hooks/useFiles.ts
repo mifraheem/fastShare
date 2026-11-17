@@ -36,7 +36,7 @@ function assertOk<T>(res: ApiResponse<T>): T {
 /**
  * List all files for a room
  */
-export function useRoomFiles(roomCode: string) {
+export function useRoomFiles(roomCode: string, { live }: { live: boolean }) {
   return useQuery<GetRoomFilesResponse>({
     queryKey: ["rooms", roomCode, "files"],
     queryFn: async () => {
@@ -44,8 +44,8 @@ export function useRoomFiles(roomCode: string) {
       return assertOk(res);
     },
     enabled: !!roomCode,
-    // Keep the file list live as others upload, without flicker.
-    refetchInterval: 5000,
+    // Realtime signals refresh this; poll slowly only while disconnected
+    refetchInterval: live ? false : 10_000,
     refetchOnWindowFocus: true,
     placeholderData: keepPreviousData,
   });

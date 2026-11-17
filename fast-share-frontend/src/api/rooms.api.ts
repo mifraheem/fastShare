@@ -90,6 +90,8 @@ export interface RoomDetailResponse {
   updated_at: number;
   members: RoomDetailMember[];
   member_count: number;
+  /** Secret Realtime channel key (members only) */
+  realtime_key: string;
 }
 
 /* ---- Delete Room ---- */

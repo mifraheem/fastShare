@@ -1,94 +1,100 @@
-import { useState, useEffect } from "react";
-import { Pencil, Sparkles } from "lucide-react";
+"use client";
+
+import { useState } from "react";
+import { Shuffle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Avatar } from "@/components/Avatar";
 import { useDisplayName } from "@/contexts/DisplayNameContext";
 import { generateRandomDisplayName } from "@/lib/displayName";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
 interface DisplayNameBadgeProps {
-  variant?: "default" | "compact";
   className?: string;
+  /** Render as a full-width row (used in the room's People panel). */
+  block?: boolean;
 }
 
-export function DisplayNameBadge({ variant = "default", className = "" }: DisplayNameBadgeProps) {
-  const { displayName, setDisplayName, maxLength } = useDisplayName();
+export function DisplayNameBadge({ className, block = false }: DisplayNameBadgeProps) {
+  const { displayName } = useDisplayName();
   const [open, setOpen] = useState(false);
-  const [editValue, setEditValue] = useState(displayName);
-
-  useEffect(() => {
-    setEditValue(displayName);
-  }, [displayName, open]);
-
-  const handleSave = () => {
-    const trimmed = editValue.trim().slice(0, maxLength);
-    if (!trimmed) {
-      toast.error("Name can't be empty");
-      return;
-    }
-    setDisplayName(trimmed);
-    setOpen(false);
-    toast.success("Name updated!");
-  };
-
-  const handleRandom = () => {
-    const newName = generateRandomDisplayName();
-    setDisplayName(newName);
-    setEditValue(newName);
-    toast.success("New name picked!");
-  };
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
-          variant="outline"
-          size={variant === "compact" ? "sm" : "default"}
-          className={`gap-2 font-medium shrink-0 ${className}`}
+          variant="ghost"
+          className={cn("h-9 gap-2 px-2 font-medium", block && "h-auto w-full justify-start py-2", className)}
+          aria-label={`Your name is ${displayName}. Change it`}
         >
-          <span className="bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
-            {variant === "compact" ? displayName : `Hey, ${displayName}`}
-          </span>
-          <Pencil className="h-3.5 w-3.5 opacity-70" />
+          <Avatar name={displayName} className="size-6 text-[10px]" />
+          <span className="max-w-[12ch] truncate">{displayName}</span>
+          {block && <span className="ml-auto text-xs font-normal text-muted-foreground">Change</span>}
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-72" align="end">
-        <div className="space-y-4">
-          <div>
-            <label className="text-sm font-medium mb-1.5 block">Your display name</label>
-            <Input
-              value={editValue}
-              onChange={(e) => setEditValue(e.target.value.slice(0, maxLength))}
-              maxLength={maxLength}
-              placeholder="Enter name..."
-              className="pr-12"
-            />
-            <p className="text-xs text-muted-foreground mt-1">
-              {editValue.length}/{maxLength} characters
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" onClick={handleSave} className="flex-1">
-              Save
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={handleRandom}
-              className="gap-1.5"
-            >
-              <Sparkles className="h-3.5 w-3.5" />
-              Pick random
-            </Button>
-          </div>
-        </div>
+        {/* Mounts on open, so it always starts from the current name */}
+        <NameForm onDone={() => setOpen(false)} />
       </PopoverContent>
     </Popover>
+  );
+}
+
+function NameForm({ onDone }: { onDone: () => void }) {
+  const { displayName, setDisplayName, maxLength } = useDisplayName();
+  const [value, setValue] = useState(displayName);
+
+  const handleSave = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = value.trim().slice(0, maxLength);
+    if (!trimmed) {
+      toast.error("Enter a name to save it");
+      return;
+    }
+    setDisplayName(trimmed);
+    onDone();
+    toast.success("Name saved");
+  };
+
+  return (
+    <form onSubmit={handleSave} className="space-y-3">
+      <div>
+        <label htmlFor="display-name" className="text-sm font-medium">
+          Your name in rooms
+        </label>
+        <p className="text-xs text-muted-foreground">Others see this next to your messages.</p>
+      </div>
+      <div className="flex gap-2">
+        <Input
+          id="display-name"
+          value={value}
+          onChange={(e) => setValue(e.target.value.slice(0, maxLength))}
+          maxLength={maxLength}
+          autoComplete="off"
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="shrink-0"
+          onClick={() => setValue(generateRandomDisplayName())}
+          aria-label="Suggest a random name"
+          title="Suggest a random name"
+        >
+          <Shuffle />
+        </Button>
+      </div>
+      <div className="flex items-center justify-between">
+        <span className="text-xs tabular-nums text-muted-foreground">
+          {value.length}/{maxLength}
+        </span>
+        <Button type="submit" size="sm">
+          Save name
+        </Button>
+      </div>
+    </form>
   );
 }

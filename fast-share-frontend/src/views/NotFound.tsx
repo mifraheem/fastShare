@@ -1,27 +1,21 @@
 "use client";
 
-import { usePathname } from "next/navigation";
-import { useEffect } from "react";
 import Link from "next/link";
+import { Button } from "@/components/ui/button";
 
-const NotFound = () => {
-  const pathname = usePathname();
-
-  useEffect(() => {
-    console.error("404 Error: User attempted to access non-existent route:", pathname);
-  }, [pathname]);
-
-  return (
-    <div className="flex min-h-screen items-center justify-center bg-muted">
-      <div className="text-center">
-        <h1 className="mb-4 text-4xl font-bold">404</h1>
-        <p className="mb-4 text-xl text-muted-foreground">Oops! Page not found</p>
-        <Link href="/" className="text-primary underline hover:text-primary/90">
-          Return to Home
-        </Link>
-      </div>
+const NotFound = () => (
+  <main className="flex min-h-dvh items-center justify-center p-6">
+    <div className="max-w-sm text-center">
+      <p className="font-mono text-sm text-muted-foreground">404</p>
+      <h1 className="mt-2 text-2xl font-semibold tracking-tight">There&apos;s nothing at this address</h1>
+      <p className="mt-2 text-sm text-muted-foreground">
+        If someone shared a room with you, ask them for its 6-character code.
+      </p>
+      <Button asChild className="mt-6">
+        <Link href="/">Go to FastShare</Link>
+      </Button>
     </div>
-  );
-};
+  </main>
+);
 
 export default NotFound;

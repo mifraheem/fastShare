@@ -57,6 +57,8 @@ export function useRoomDetail(roomCode: string | undefined) {
       return assertOk(res);
     },
     enabled: !!roomCode,
+    retry: 1,
+    refetchInterval: 60_000, // safety net; realtime "room" signals refresh it immediately
   });
 }
 

@@ -50,7 +50,8 @@ const detail = (await call(member, "GET", `/rooms/${code}`)).json.data;
 assert.equal(detail.member_count, 2);
 assert.equal(detail.owner, false);
 assert.deepEqual(detail.members.map((m) => [m.name, m.role, m.me]), [["OwnerName-TooLo", "owner", false], ["Member", "member", true]]);
-step("detail with members");
+assert.match(detail.realtime_key, /^[0-9a-f-]{36}$/);
+step("detail with members (+ realtime key for members only)");
 
 assert.equal((await call(member, "POST", `/rooms/${code}/extend`, { minutes: 5 })).status, 403);
 assert.equal((await call(owner, "POST", `/rooms/${code}/extend`, { minutes: 0 })).status, 400);
@@ -65,7 +66,9 @@ const m2 = (await call(member, "POST", `/rooms/${code}/messages`, "hey")).json.d
 const list = (await call(member, "GET", `/rooms/${code}/messages`)).json.data.messages;
 assert.deepEqual(list.map((m) => [m.content, m.sender_name, m.mine]), [["<b>hello</b>", "OwnerName-TooLo", false], ["hey", "Member", true]]);
 assert.equal((await call(member, "GET", `/rooms/${code}/messages?after=${m1.id}`)).json.data.messages.length, 1);
-step("send / list / after");
+// Without `after`, the latest N come back (oldest first): limit=1 must return the newest message
+assert.deepEqual((await call(member, "GET", `/rooms/${code}/messages?limit=1`)).json.data.messages.map((m) => m.content), ["hey"]);
+step("send / list latest / after");
 
 assert.equal((await call(member, "PUT", `/messages/${m1.id}`, "hacked")).status, 403);
 assert.equal((await call(owner, "PUT", `/messages/${m1.id}`, "edited")).json.data.status, "updated");

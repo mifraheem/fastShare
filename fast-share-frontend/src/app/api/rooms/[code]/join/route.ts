@@ -1,10 +1,11 @@
 import { handle, ok, requireClient, now, HttpError } from "@/server/api";
 import { sql } from "@/server/db";
+import { notifyRoom } from "@/server/realtime";
 
 /** POST /api/rooms/:code/join */
 export const POST = handle<{ code: string }>(async (req, { code }) => {
   const client = await requireClient(req);
-  const [room] = await sql`select id, code, name, expires_at from rooms where code = ${code.trim()}`;
+  const [room] = await sql`select id, code, name, expires_at, realtime_key from rooms where code = ${code.trim()}`;
   if (!room) throw new HttpError(404, "NOT_FOUND", "room not found");
 
   const n = now();
@@ -15,6 +16,7 @@ export const POST = handle<{ code: string }>(async (req, { code }) => {
     values (${room.id}, ${client.id}, 'member', ${n})
     on conflict (room_id, client_id) do nothing`;
   await sql`update rooms set updated_at = ${n} where id = ${room.id}`;
+  await notifyRoom(room.realtime_key, { event: "room", payload: { op: "join" } });
 
   return ok(200, {
     status: "joined",

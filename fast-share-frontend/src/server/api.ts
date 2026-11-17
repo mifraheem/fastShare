@@ -86,7 +86,7 @@ export async function requireClient(req: NextRequest, allowCookie = false) {
 /** Room the client is a member of, or throws 403. Optionally throws 410 if expired. */
 export async function requireMembership(code: string, clientId: number, rejectExpired = true) {
   const [room] = await sql`
-    select r.id, r.code, r.name, r.owner_client_id, r.expires_at, rm.role
+    select r.id, r.code, r.name, r.owner_client_id, r.expires_at, r.realtime_key, rm.role
     from rooms r
     join room_members rm on rm.room_id = r.id
     where r.code = ${code} and rm.client_id = ${clientId}`;
@@ -100,6 +100,7 @@ export async function requireMembership(code: string, clientId: number, rejectEx
     name: string;
     owner_client_id: number;
     expires_at: number;
+    realtime_key: string;
     role: string;
   };
 }

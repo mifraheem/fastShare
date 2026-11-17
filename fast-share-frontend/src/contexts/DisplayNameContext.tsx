@@ -33,6 +33,8 @@ export function DisplayNameProvider({ children }: { children: React.ReactNode })
   useEffect(() => {
     ensureClientUUID();
     const name = ensureDisplayName();
+    // Intentional: localStorage is only readable after hydration, so the first render is "Guest"
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDisplayNameState(name);
     putMe(name).catch(() => {
       // Offline or server error; local name still works

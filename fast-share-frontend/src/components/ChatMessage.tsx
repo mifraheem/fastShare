@@ -1,8 +1,8 @@
+"use client";
+
 import { useState, useRef, useEffect } from "react";
-import { motion } from "framer-motion";
-import { Message } from "@/data/mockData";
 import { format } from "date-fns";
-import { MoreVertical, Pencil, Trash2, Check, X, Copy, CheckCheck } from "lucide-react";
+import { MoreHorizontal, Pencil, Trash2, Copy, Check } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,35 +10,45 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Avatar } from "@/components/Avatar";
 import { sanitizeMessageHtml, isHtml, htmlToPlainText } from "@/lib/sanitize";
-import { avatarGradient, avatarInitials } from "@/lib/avatar";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
+export interface Message {
+  id: string;
+  sender: string;
+  content: string;
+  timestamp: Date;
+  isOwn: boolean;
+}
+
 interface ChatMessageProps {
   message: Message;
-  index: number;
   /** Numeric API id – when set with onEdit/onDelete, shows edit/delete for own messages */
   messageId?: number;
-  /** When true this message is grouped under the previous one (same sender) – hide avatar + name */
+  /** Grouped under the previous message from the same sender: hide avatar + name */
   grouped?: boolean;
   onEdit?: (id: number, content: string) => void;
   onDelete?: (id: number) => void;
   isUpdating?: boolean;
   isDeleting?: boolean;
+  /** Shown optimistically, not yet confirmed by the server */
+  pending?: boolean;
 }
 
 export function ChatMessage({
   message,
-  index,
   messageId,
   grouped = false,
   onEdit,
   onDelete,
   isUpdating,
   isDeleting,
+  pending,
 }: ChatMessageProps) {
   const isOwn = message.isOwn;
   const [isEditing, setIsEditing] = useState(false);
@@ -49,19 +59,15 @@ export function ChatMessage({
 
   const canMutate = isOwn && messageId != null && (onEdit || onDelete);
   const contentIsHtml = isHtml(message.content);
-  const displayContent = contentIsHtml
-    ? sanitizeMessageHtml(message.content)
-    : message.content;
+  const time = format(message.timestamp, "h:mm a");
 
   useEffect(() => {
-    if (isEditing) {
-      setEditContent(message.content);
-      if (contentIsHtml && editEditableRef.current) {
-        editEditableRef.current.innerHTML = sanitizeMessageHtml(message.content);
-        editEditableRef.current.focus();
-      } else {
-        editInputRef.current?.focus();
-      }
+    if (!isEditing) return;
+    if (contentIsHtml && editEditableRef.current) {
+      editEditableRef.current.innerHTML = sanitizeMessageHtml(message.content);
+      editEditableRef.current.focus();
+    } else {
+      editInputRef.current?.focus();
     }
   }, [isEditing, message.content, contentIsHtml]);
 
@@ -75,12 +81,8 @@ export function ChatMessage({
 
   const handleSaveEdit = () => {
     const value = getEditValue();
-    if (value && value !== message.content && onEdit && messageId != null) {
-      onEdit(messageId, value);
-      setIsEditing(false);
-    } else {
-      setIsEditing(false);
-    }
+    if (value && value !== message.content && onEdit && messageId != null) onEdit(messageId, value);
+    setIsEditing(false);
   };
 
   const handleCancelEdit = () => {
@@ -88,186 +90,123 @@ export function ChatMessage({
     setIsEditing(false);
   };
 
-  const handleCopyMessage = async () => {
-    const plain = contentIsHtml ? htmlToPlainText(message.content) : message.content;
-    await navigator.clipboard.writeText(plain);
+  const editKeys = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSaveEdit();
+    }
+    if (e.key === "Escape") handleCancelEdit();
+  };
+
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(contentIsHtml ? htmlToPlainText(message.content) : message.content);
     setCopied(true);
     toast.success("Message copied");
-    setTimeout(() => setCopied(false), 2000);
+    setTimeout(() => setCopied(false), 1500);
   };
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.18, ease: "easeOut" }}
-      className={cn(
-        "flex gap-2.5 px-1",
-        grouped ? "mt-0.5" : "mt-3 first:mt-0",
-        isOwn && "flex-row-reverse",
-      )}
-    >
-      {/* Avatar (or spacer to keep grouped messages aligned) */}
-      {grouped ? (
-        <div className="w-9 shrink-0" aria-hidden />
-      ) : (
-        <div
-          className={cn(
-            "shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-xs font-semibold text-white shadow-sm ring-1 ring-black/5 select-none bg-gradient-to-br",
-            isOwn ? "from-primary to-accent" : avatarGradient(message.sender),
-          )}
-          title={message.sender}
-        >
-          {avatarInitials(message.sender)}
-        </div>
-      )}
+    <div className={cn("flex gap-2.5", grouped ? "mt-1" : "mt-4 first:mt-0", isOwn && "flex-row-reverse")}>
+      {!isOwn && (grouped ? <span className="w-8 shrink-0" aria-hidden /> : <Avatar name={message.sender} />)}
 
-      <div className={cn("flex flex-col gap-1 max-w-[78%] sm:max-w-[70%]", isOwn && "items-end")}>
+      <div className={cn("flex min-w-0 max-w-[82%] flex-col sm:max-w-[70%]", isOwn && "items-end")}>
         {!grouped && (
-          <div className={cn("flex items-center gap-2 px-1", isOwn && "flex-row-reverse")}>
-            <span className="text-[13px] font-semibold text-foreground leading-none">
-              {message.sender}
-            </span>
-            <span className="text-[11px] text-muted-foreground leading-none tabular-nums">
-              {format(message.timestamp, "h:mm a")}
-            </span>
+          <div className={cn("mb-1 flex items-baseline gap-2 px-0.5", isOwn && "flex-row-reverse")}>
+            {!isOwn && <span className="truncate text-[13px] font-semibold">{message.sender}</span>}
+            <time className="text-xs text-muted-foreground" dateTime={message.timestamp.toISOString()}>
+              {pending ? "Sending…" : time}
+            </time>
           </div>
         )}
 
         {isEditing ? (
-          <div
-            className={cn(
-              "px-3 py-2 rounded-2xl min-w-[220px]",
-              isOwn ? "chat-bubble-own" : "chat-bubble-other",
-            )}
-          >
+          <div className="w-full min-w-[min(260px,70vw)] rounded-2xl border bg-card p-2">
             {contentIsHtml ? (
               <div
                 ref={editEditableRef}
                 contentEditable
                 suppressContentEditableWarning
-                onInput={() =>
-                  setEditContent(editEditableRef.current?.innerHTML ?? "")
-                }
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSaveEdit();
-                  }
-                  if (e.key === "Escape") handleCancelEdit();
-                }}
-                className="min-h-[80px] rounded border border-border bg-background/50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary mb-2 prose prose-sm dark:prose-invert max-w-none [&_ul]:list-disc [&_ol]:list-decimal [&_h1]:text-lg [&_h2]:text-base"
+                onInput={() => setEditContent(editEditableRef.current?.innerHTML ?? "")}
+                onKeyDown={editKeys}
+                className="message-body min-h-[72px] rounded-lg border bg-background px-3 py-2 focus:outline-none focus:ring-2 focus:ring-ring"
               />
             ) : (
               <Input
                 ref={editInputRef}
                 value={editContent}
                 onChange={(e) => setEditContent(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSaveEdit();
-                  }
-                  if (e.key === "Escape") handleCancelEdit();
-                }}
-                className="bg-background/50 border-border mb-2"
-                placeholder="Edit message..."
+                onKeyDown={editKeys}
+                aria-label="Edit message"
               />
             )}
-            <div className="flex gap-2 justify-end">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleCancelEdit}
-                className="h-8"
-              >
-                <X className="h-3.5 w-3 mr-1" />
+            <div className="mt-2 flex justify-end gap-1.5">
+              <Button variant="ghost" size="sm" onClick={handleCancelEdit}>
                 Cancel
               </Button>
-              <Button
-                size="sm"
-                onClick={handleSaveEdit}
-                disabled={!getEditValue() || getEditValue() === message.content || isUpdating}
-                className="h-8"
-              >
-                <Check className="h-3.5 w-3 mr-1" />
+              <Button size="sm" onClick={handleSaveEdit} disabled={isUpdating}>
                 {isUpdating ? "Saving…" : "Save"}
               </Button>
             </div>
           </div>
         ) : (
-          <div className={cn("group relative", isDeleting && "opacity-50")}>
-            <div
-              className={cn(
-                "px-3.5 py-2 shadow-sm transition-colors",
-                isOwn ? "chat-bubble-own" : "chat-bubble-other",
-                // soften the grouped corner so stacked bubbles read as one block
-                grouped && (isOwn ? "rounded-tr-md" : "rounded-tl-md"),
-              )}
-            >
+          <div className={cn("group relative max-w-full transition-opacity", (isDeleting || pending) && "opacity-60")}>
+            <div className={cn("px-3.5 py-2", isOwn ? "bubble-own" : "bubble-other", grouped && (isOwn ? "rounded-tr-md" : "rounded-tl-md"))}>
               {contentIsHtml ? (
                 <div
-                  className="text-sm leading-relaxed prose prose-sm dark:prose-invert max-w-none [&_p]:my-1 [&_ul]:my-2 [&_ol]:my-2 [&_li]:my-0.5 [&_h1]:text-base [&_h2]:text-sm [&_h3]:text-sm [&_a]:underline"
-                  dangerouslySetInnerHTML={{ __html: displayContent }}
+                  className="message-body"
+                  dangerouslySetInnerHTML={{ __html: sanitizeMessageHtml(message.content) }}
                 />
               ) : (
-                <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
-                  {message.content}
-                </p>
+                <p className="message-body whitespace-pre-wrap">{message.content}</p>
               )}
             </div>
 
-            {/* Hover actions */}
+            {/* Actions: on hover with a mouse, always visible on touch screens */}
             <div
               className={cn(
-                "absolute top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity",
-                isOwn ? "right-full mr-1.5" : "left-full ml-1.5",
+                "absolute top-1/2 flex -translate-y-1/2 items-center opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100",
+                isOwn ? "right-full pr-1" : "left-full pl-1"
               )}
             >
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-7 w-7 rounded-full bg-background/90 border border-border/60 shadow-sm hover:bg-background"
-                onClick={handleCopyMessage}
+                className="size-7 text-muted-foreground"
+                onClick={handleCopy}
+                aria-label="Copy message"
                 title="Copy message"
               >
-                {copied ? (
-                  <CheckCheck className="h-3.5 w-3.5 text-success" />
-                ) : (
-                  <Copy className="h-3.5 w-3.5" />
-                )}
+                {copied ? <Check className="text-success" /> : <Copy />}
               </Button>
-
               {canMutate && (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 rounded-full bg-background/90 border border-border/60 shadow-sm hover:bg-background"
-                    >
-                      <MoreVertical className="h-3.5 w-3.5" />
-                      <span className="sr-only">Message actions</span>
+                    <Button variant="ghost" size="icon" className="size-7 text-muted-foreground" aria-label="More actions">
+                      <MoreHorizontal />
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align={isOwn ? "end" : "start"}>
                     {onEdit && (
                       <DropdownMenuItem
-                        onClick={() => setIsEditing(true)}
+                        onClick={() => {
+                          setEditContent(message.content);
+                          setIsEditing(true);
+                        }}
                         disabled={isUpdating}
                       >
-                        <Pencil className="h-4 w-4 mr-2" />
-                        Edit
+                        <Pencil className="mr-2 size-4" />
+                        Edit message
                       </DropdownMenuItem>
                     )}
+                    {onEdit && onDelete && <DropdownMenuSeparator />}
                     {onDelete && (
                       <DropdownMenuItem
                         onClick={() => onDelete(messageId!)}
                         disabled={isDeleting}
                         className="text-destructive focus:text-destructive"
                       >
-                        <Trash2 className="h-4 w-4 mr-2" />
-                        Delete
+                        <Trash2 className="mr-2 size-4" />
+                        Delete message
                       </DropdownMenuItem>
                     )}
                   </DropdownMenuContent>
@@ -277,6 +216,6 @@ export function ChatMessage({
           </div>
         )}
       </div>
-    </motion.div>
+    </div>
   );
 }

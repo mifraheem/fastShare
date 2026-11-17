@@ -2,6 +2,7 @@ import {
   handle, ok, readJson, requireClient, requireMembership, now, HttpError, isUniqueViolation, safeFilename,
 } from "@/server/api";
 import { sql } from "@/server/db";
+import { notifyRoom } from "@/server/realtime";
 import { getUploaded } from "@/server/storage";
 
 type Params = { code: string };
@@ -56,6 +57,7 @@ export const POST = handle<Params>(async (req, { code }) => {
       insert into files (room_id, uploader_client_id, filename, storage_key, size, created_at)
       values (${room.id}, ${client.id}, ${filename}, ${key}, ${object.size}, ${n})
       returning id`;
+    await notifyRoom(room.realtime_key, { event: "files", payload: {} });
     return ok(201, { id: file.id, filename, size: object.size, uploaded_at: n });
   } catch (err) {
     if (isUniqueViolation(err)) throw new HttpError(409, "CONFLICT", "file already recorded");
