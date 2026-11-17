@@ -4,20 +4,23 @@ Private rooms for real-time chat and file sharing. Create a room, share the code
 
 **Live app:** [room.ifraheem.dev](https://room.ifraheem.dev)
 
-| Part        | Repo folder           | Stack              | Hosting   |
-|------------|------------------------|--------------------|-----------|
-| **Frontend** | `fast-share-frontend`  | Next.js, React, Tailwind | Vercel    |
-| **Backend**  | `fast-share-backend`   | Node.js, Express, SQLite | Hostinger |
+| Part         | Stack                                   | Hosting    |
+|--------------|-----------------------------------------|------------|
+| **App + API** | Next.js (App Router + Route Handlers), React, Tailwind | Vercel |
+| **Database** | Postgres                                | Supabase   |
+| **Files**    | Supabase Storage (private bucket)       | Supabase   |
 
 ## Repo structure
 
 ```
 fast-share/
-  fast-share-frontend/   # UI (React)
-  fast-share-backend/    # API (Node.js + Express)
+  fast-share-frontend/          # The whole app (Next.js)
+    src/app/                    # Pages + API routes (src/app/api)
+    src/server/                 # Server-only: DB, storage, API helpers
+    supabase/migrations/        # Database schema
 ```
 
-See each folder’s README for setup and run instructions.
+See [fast-share-frontend/README.md](fast-share-frontend/README.md) for setup and run instructions.
 
 ## Contributing
 

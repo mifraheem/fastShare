@@ -1,7 +1,7 @@
 import { ensureClientUUID } from "@/lib/clientUUID";
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+// Same-origin Next.js API routes
+const API_BASE_URL = "/api";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
 
@@ -42,7 +42,6 @@ export async function api<T>(
     method: options.method ?? "GET",
     headers,
     body,
-    credentials: "include",
   });
 
   const contentType = res.headers.get("content-type") || "";

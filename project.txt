@@ -1,3 +1,5 @@
+> **Outdated (Nov 2026):** this describes the original Vite + Express/SQLite version. The app is now a single Next.js app (API in `fast-share-frontend/src/app/api`) on Supabase (Postgres + Storage) — see README.md.
+
 # FastShare — Full Project Context for AI/LLM
 
 This document describes the FastShare codebase so an AI or developer can understand the full context: purpose, architecture, stack, data flow, and where key logic lives.

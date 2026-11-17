@@ -10,7 +10,7 @@ import {
   getRoomFiles,
   uploadFile,
   deleteFile,
-  downloadFile,
+  fileDownloadUrl,
   FileItem,
   GetRoomFilesResponse,
   UploadFileResponse,
@@ -94,48 +94,12 @@ export function useDeleteFile(roomCode: string) {
 }
 
 /**
- * Download a file
- * (binary stream, no React Query cache)
+ * Download a file. A plain navigation (not fetch): the API redirects to a signed storage URL
+ * with "Content-Disposition: attachment", so the browser saves it and stays on the page.
+ * No CORS needed and the file never sits in JS memory.
  */
 export function useDownloadFile() {
-  return async (fileId: number, filename: string, fileUrl?: string) => {
-    if (fileUrl) {
-      try {
-        // Fetch the file and force download as blob
-        const response = await fetch(fileUrl);
-        const blob = await response.blob();
-
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = filename;
-        a.style.display = "none";
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-
-        // Clean up the object URL
-        window.URL.revokeObjectURL(url);
-      } catch (error) {
-        console.error("Download failed:", error);
-        // Fallback: try opening in new tab
-        window.open(fileUrl, '_blank');
-      }
-    } else {
-      // Fallback to API download
-      const res = await downloadFile(fileId);
-      const blob = await res.blob();
-
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-
-      a.remove();
-      window.URL.revokeObjectURL(url);
-    }
+  return async (fileId: number, _filename?: string, _fileUrl?: string) => {
+    window.location.assign(fileDownloadUrl(fileId));
   };
 }
