@@ -6,7 +6,7 @@ Private rooms for real-time chat and file sharing. Create a room, share the code
 
 | Part        | Repo folder           | Stack              | Hosting   |
 |------------|------------------------|--------------------|-----------|
-| **Frontend** | `fast-share-frontend`  | React, Vite, Tailwind | Vercel    |
+| **Frontend** | `fast-share-frontend`  | Next.js, React, Tailwind | Vercel    |
 | **Backend**  | `fast-share-backend`   | Node.js, Express, SQLite | Hostinger |
 
 ## Repo structure

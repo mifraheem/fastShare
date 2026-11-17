@@ -1,5 +1,7 @@
+"use client";
+
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { format, isToday, isYesterday } from "date-fns";
 import {
@@ -56,8 +58,10 @@ import { toast } from "sonner";
 import { sanitizeMessageHtml } from "@/lib/sanitize";
 
 export default function RoomView() {
-  const { roomName, roomCode } = useParams();
-  const navigate = useNavigate();
+  const params = useParams<{ roomName: string; roomCode: string }>();
+  const roomName = params?.roomName ? decodeURIComponent(params.roomName) : undefined;
+  const roomCode = params?.roomCode;
+  const router = useRouter();
 
   const [newMessage, setNewMessage] = useState("");
   const [composerEmpty, setComposerEmpty] = useState(true);
@@ -314,7 +318,7 @@ export default function RoomView() {
       await deleteRoomMutation.mutateAsync(roomCode);
       setDeleteDialogOpen(false);
       toast.success("Room deleted");
-      navigate("/");
+      router.push("/");
     } catch (err) {
       toast.error((err as Error).message);
     }
@@ -390,7 +394,7 @@ export default function RoomView() {
               variant="ghost"
               size="icon"
               className="h-9 w-9 shrink-0"
-              onClick={() => navigate("/")}
+              onClick={() => router.push("/")}
               aria-label="Back to home"
             >
               <ArrowLeft className="h-5 w-5" />

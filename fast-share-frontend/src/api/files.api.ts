@@ -74,7 +74,7 @@ export function uploadFile(roomCode: string, file: File) {
  */
 export async function downloadFile(fileId: number) {
   const res = await fetch(
-    `${import.meta.env.VITE_API_BASE_URL}/files/${fileId}/download`,
+    `${process.env.NEXT_PUBLIC_API_BASE_URL}/files/${fileId}/download`,
     {
       method: "GET",
       credentials: "include",

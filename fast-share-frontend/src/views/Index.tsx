@@ -1,5 +1,7 @@
+"use client";
+
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
   Plus,
@@ -25,7 +27,7 @@ import {
 import { ensureClientUUID } from "@/lib/clientUUID";
 
 export default function Index() {
-  const navigate = useNavigate();
+  const router = useRouter();
 
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isJoinModalOpen, setIsJoinModalOpen] = useState(false);
@@ -58,7 +60,7 @@ export default function Index() {
       const room = await createRoomMutation.mutateAsync(customName.trim() || undefined);
       setIsCreateModalOpen(false);
 
-      navigate(
+      router.push(
         `/room/${room.name.replace(/\s+/g, "-")}/${room.code}`
       );
     } catch (err) {
@@ -71,7 +73,7 @@ export default function Index() {
       const room = await joinRoomMutation.mutateAsync(code);
       setIsJoinModalOpen(false);
 
-      navigate(
+      router.push(
         `/room/${room.name.replace(/\s+/g, "-")}/${room.code}`
       );
     } catch (err) {
@@ -83,7 +85,7 @@ export default function Index() {
     name: string;
     code: string;
   }) => {
-    navigate(
+    router.push(
       `/room/${room.name.replace(/\s+/g, "-")}/${room.code}`
     );
   };

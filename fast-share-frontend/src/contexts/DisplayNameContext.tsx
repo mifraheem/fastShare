@@ -25,11 +25,9 @@ const DisplayNameContext = createContext<DisplayNameContextValue | null>(null);
 
 export function DisplayNameProvider({ children }: { children: React.ReactNode }) {
   const queryClient = useQueryClient();
-  const [displayName, setDisplayNameState] = useState<string>(() => {
-    if (typeof window === "undefined") return "Guest";
-    ensureClientUUID();
-    return ensureDisplayName();
-  });
+  // Same value on server and first client render (avoids hydration mismatch);
+  // the effect below swaps in the stored name right after mount.
+  const [displayName, setDisplayNameState] = useState<string>("Guest");
 
   // Sync display name to backend on load (so server has it for messages/members)
   useEffect(() => {
