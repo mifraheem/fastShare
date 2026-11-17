@@ -92,7 +92,7 @@ module.exports = {
   ensureDir,
   resolveFileName,
   uploadFile,
-  getFileUrl,
+  getFileUrl: getDownloadUrl,
   getDownloadUrl,
   deleteFile
 };
