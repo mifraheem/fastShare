@@ -1,4 +1,5 @@
 {
+  "framework": "nextjs",
   "regions": ["sin1"],
   "crons": [{ "path": "/api/cron/cleanup", "schedule": "0 3 * * *" }]
 }
